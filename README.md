@@ -16,6 +16,37 @@ The pipeline runs every Sunday and produces 3 videos per week with minimal manua
 
 ---
 
+## YouTube Shorts Pipeline
+
+For every published long-form video, the system automatically generates **2 YouTube Shorts** derived from its strongest news segments, scheduled for the day after the main video goes live.
+
+### How it works
+
+1. **Shorts scheduler** (`agents/shorts_scheduler.py`) runs Mon/Wed/Fri at 11pm IST — 2 hours after the full video publishes
+2. **Shorts agent** (`agents/shorts_agent.py`) picks 2 `point_N` segments from the full video script (spread across the video for topic variety)
+3. **Per short:** generates a condensed script (Claude Sonnet) → voiceover (OpenAI TTS) → assembles portrait video (ffmpeg) → uploads to YouTube → schedules publish
+4. **Email notification** with both Short URLs is sent on completion
+
+### Output format
+
+- **Resolution:** 1080 × 1920 (9:16 portrait, YouTube Shorts native)
+- **Duration:** ≤ 60 seconds
+- **Visual layers:** B-roll footage → per-sentence captions (rotating colors) → hook overlay (first 3.5s) → CTA overlay (last 8s)
+
+### Schedule
+
+| Full video published | Short 0 | Short 1 |
+|---|---|---|
+| Monday | Tuesday 7:00am IST | Tuesday 7:00pm IST |
+| Wednesday | Thursday 7:00am IST | Thursday 7:00pm IST |
+| Friday | Saturday 7:00am IST | Saturday 7:00pm IST |
+
+### Cost
+
+~$0.01 per full video (2 Shorts combined) — Claude Sonnet script + OpenAI TTS × 2.
+
+---
+
 ## Architecture: WAT Framework
 
 ```
@@ -70,9 +101,10 @@ crontab -e
 ```
 Add:
 ```
-0 21 * * 0   cd /path/to/LearningAgentic && .venv/bin/python agents/analytics_agent.py
-0 22 * * 0   cd /path/to/LearningAgentic && .venv/bin/python agents/idea_agent.py
-*/30 * * * * cd /path/to/LearningAgentic && .venv/bin/python agents/approval_poller.py
+0 21 * * 0    cd /path/to/TrendingTopics && .venv/bin/python agents/analytics_agent.py
+0 22 * * 0    cd /path/to/TrendingTopics && .venv/bin/python agents/idea_agent.py
+*/30 * * * *  cd /path/to/TrendingTopics && .venv/bin/python agents/approval_poller.py
+30 17 * * 1,3,5  cd /path/to/TrendingTopics && .venv/bin/python agents/shorts_scheduler.py >> .tmp/cron.log 2>&1
 ```
 
 ---
@@ -80,9 +112,9 @@ Add:
 ## Project Structure
 
 ```
-agents/          # 10 orchestrator agents (idea, production, publisher, analytics, etc.)
+agents/          # 12 orchestrator agents (idea, production, publisher, analytics, shorts, etc.)
 tools/           # 31 deterministic Python scripts
-workflows/       # 11 Markdown SOPs
+workflows/       # 13 Markdown SOPs
 .env.example     # Template for required environment variables
 requirements.txt # Python dependencies
 setup.sh         # One-time setup script
