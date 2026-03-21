@@ -31,6 +31,10 @@ Every 30 min → Approval Poller detects reply → queues approved ideas for pro
 MONDAY / WEDNESDAY / FRIDAY
 ├──  7:00 AM  → Full video goes public (auto-scheduled by YouTube)
 │
+├──  8:00 AM  → Reddit Scheduler (runs on publish day only)
+│               Posts video to 2 relevant subreddits based on category
+│               → emails you the Reddit post URLs
+│
 └──  9:00 PM  → Shorts Scheduler (runs on publish day only)
                Triggers Shorts Agent for that day's video:
                1. Generate 2 short scripts (Claude)
@@ -54,6 +58,7 @@ NEXT DAY (Tue / Thu / Sat)
 | Sun 9:15 PM           | Idea Agent → 10 ideas emailed to you   |
 | Every 30 min          | Approval Poller checks Gmail            |
 | Mon/Wed/Fri 7:00 AM   | Full video goes public                  |
+| Mon/Wed/Fri 8:00 AM   | Reddit Scheduler → posts to 2 subreddits |
 | Mon/Wed/Fri 9:00 PM   | Shorts Scheduler → produces 2 shorts   |
 | Tue/Thu/Sat 7:00 AM   | Short 1 goes public                     |
 | Tue/Thu/Sat 7:00 PM   | Short 2 goes public                     |

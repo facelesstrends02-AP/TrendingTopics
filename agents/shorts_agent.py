@@ -1,15 +1,20 @@
 """
-shorts_agent.py — Produce 2 YouTube Shorts for a given full video
+shorts_agent.py — Produce 2 independent YouTube Shorts for a given publishing day
 
-Reads the video's script from state.json, generates short scripts via Claude,
-creates voiceovers + assembled portrait videos, uploads to YouTube as private,
-schedules them for the day after the full video goes live, and sends a
-notification email.
+Instead of deriving Shorts from the full video script, this agent fetches fresh
+trending ideas at trigger time and generates 2 standalone Shorts on completely
+independent topics — maximising viral potential.
+
+Flow:
+  1. Check/refresh .tmp/trending_topics.json (reuse if < 6 hours old)
+  2. generate_short_ideas.py  → 2 fresh Short ideas from today's trending topics
+  3. generate_short_scripts.py --ideas-file → 2 standalone Short scripts
+  4. Per short: voiceover → assemble → upload (private) → schedule publish
 
 Usage:
     python3 agents/shorts_agent.py --video-key video_1
 
-State reads:  state.videos.{video_key}.script_path
+State reads:  state.videos.{video_key}.script_path        (still needed by assemble_short.py)
               state.videos.{video_key}.scheduled_publish_at
 State writes: state.videos.{video_key}.shorts.short_{0,1}
               state.videos.{video_key}.shorts_scheduling_triggered (set by shorts_scheduler)
@@ -23,6 +28,8 @@ import sys
 from datetime import datetime, timedelta, timezone
 
 from dotenv import load_dotenv
+
+TRENDING_CACHE_MAX_AGE_HOURS = 6
 
 load_dotenv()
 
@@ -157,15 +164,48 @@ def main():
     scheduled_publish_at = (video_data.get("scheduled_publish_at")
                              or video_data.get("scheduled_at"))
 
-    # Step 1: Generate short scripts
+    # Step 1: Ensure fresh trending topics (reuse cache if < 6 hours old)
+    trending_path = os.path.join(TMP_DIR, "trending_topics.json")
+    needs_refresh = True
+    if os.path.exists(trending_path):
+        age_hours = (datetime.now().timestamp() - os.path.getmtime(trending_path)) / 3600
+        if age_hours < TRENDING_CACHE_MAX_AGE_HOURS:
+            print(f"[shorts_agent] Reusing trending cache ({age_hours:.1f}h old).")
+            needs_refresh = False
+
+    if needs_refresh:
+        print(f"[shorts_agent] Fetching fresh trending topics...")
+        try:
+            run_tool("scrape_trending_topics.py", ["--output", trending_path])
+        except Exception as e:
+            log_error(f"scrape_trending_topics failed: {e}")
+            sys.exit(1)
+
+    # Step 2: Generate 2 independent Short ideas from trending topics
+    ideas_path = os.path.join(TMP_DIR, "shorts", f"{video_key}_short_ideas.json")
+    os.makedirs(os.path.dirname(ideas_path), exist_ok=True)
+
+    if not os.path.exists(ideas_path):
+        print(f"[shorts_agent] Generating fresh Short ideas for {video_key}...")
+        try:
+            run_tool("generate_short_ideas.py", [
+                "--trending-file", trending_path,
+                "--output", ideas_path,
+            ])
+        except Exception as e:
+            log_error(f"generate_short_ideas failed for {video_key}: {e}")
+            sys.exit(1)
+    else:
+        print(f"[shorts_agent] Short ideas already exist, skipping idea generation.")
+
+    # Step 3: Generate Short scripts from the independent ideas
     plan_path = os.path.join(TMP_DIR, "shorts", f"{video_key}_shorts_plan.json")
-    os.makedirs(os.path.dirname(plan_path), exist_ok=True)
 
     if not os.path.exists(plan_path):
         print(f"[shorts_agent] Generating short scripts for {video_key}...")
         try:
             run_tool("generate_short_scripts.py", [
-                "--script-path", script_path,
+                "--ideas-file", ideas_path,
                 "--output", plan_path,
             ])
         except Exception as e:

@@ -35,6 +35,7 @@ After all videos:
    - **Script**: Claude Sonnet generates 8-10 minute segmented script
      - Each segment has: text, visual_cue, overlay_text, pexels_search_queries (array of 3), news_search_query, duration_estimate
      - Structure: Hook → Bridge → Context → 4 Points (with pattern interrupts between) → Engagement → CTA
+     - Each `point_N` segment also has `chapter_title`: 3-5 ALL CAPS words (e.g. "ECONOMIC FALLOUT", "WHO GETS HIT FIRST") shown as a 2.5s chapter card before that segment
      - Category-aware framing: politics/tech/finance/science/sports/entertainment/world each have distinct guidance
      - `news_search_query` per segment is a specific dateable query for finding relevant news article images
      - `pexels_search_queries` has 3 varied B-roll queries per segment (specific → complementary → broad fallback)
@@ -57,6 +58,7 @@ After all videos:
      - Manifest contains mix of `.mp4` and `.jpg` filenames
    - **Assembly**: moviepy renders final video
      - 1920x1080, 30fps, H.264/AAC
+     - **Chapter transition cards:** 2.5-second black-screen card with centered bold chapter title (from `chapter_title` field) inserted before each `point_N` segment. Fades in/out. Adds ~10s total (+4 cards × 2.5s).
      - **Video clips:** rapid cuts every 3–6 seconds with Ken Burns zoom alternating direction
      - **Still images (.jpg):** rendered as full-segment ImageClip with slow Ken Burns zoom (news photos get held for their full segment duration)
      - Hard cuts between all sub-clips (no cross-fade)

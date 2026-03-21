@@ -136,31 +136,40 @@ def load_strategy(path):
 def apply_dark_gradient(img, use_navy=False):
     """Apply a dark gradient overlay — heavier at bottom for text legibility.
 
-    When use_navy=True, uses a deep navy tint per channel strategy spec:
-    'deep navy or near-black background' with the overlay starting earlier
-    to give the whole image a darker, more premium feel.
+    For news/current events content: uses a dark overlay from top (light)
+    to bottom (heavy black) so bold text pops against any background image.
     """
     gradient = Image.new("RGBA", img.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(gradient)
 
     height = img.height
-    if use_navy:
-        # Navy strategy: start ramping from top, deeper overlay (210 alpha ceiling)
-        overlay_color = (8, 12, 45)  # deep navy
-        for y in range(height):
-            progress = max(0, y / height)
-            alpha = int(min(210, progress * 210))
-            draw.line([(0, y), (img.width, y)], fill=(*overlay_color, alpha))
-    else:
-        # Original: 0% opacity at top 30%, ramping to 75% at bottom
-        for y in range(height):
-            progress = max(0, (y / height - 0.25) / 0.75)
-            alpha = int(min(190, progress * 190))
-            draw.line([(0, y), (img.width, y)], fill=(0, 0, 0, alpha))
+    # News style: strong top-to-bottom gradient, dark enough for bold white text
+    for y in range(height):
+        progress = max(0, (y / height - 0.15) / 0.85)
+        alpha = int(min(200, progress * 200))
+        draw.line([(0, y), (img.width, y)], fill=(0, 0, 0, alpha))
 
     img_rgba = img.convert("RGBA")
     combined = Image.alpha_composite(img_rgba, gradient)
     return combined.convert("RGB")
+
+
+def add_badge(img, label="EXPLAINED"):
+    """Add a small bold badge (e.g. EXPLAINED / BREAKING) in the top-left corner."""
+    draw = ImageDraw.Draw(img)
+    badge_font = find_font(FONT_PATHS_BOLD, 32)
+    bbox = draw.textbbox((0, 0), label, font=badge_font)
+    text_w = bbox[2] - bbox[0]
+    text_h = bbox[3] - bbox[1]
+    pad_x, pad_y = 16, 10
+    rect_x1, rect_y1 = 40, 40
+    rect_x2 = rect_x1 + text_w + pad_x * 2
+    rect_y2 = rect_y1 + text_h + pad_y * 2
+    # Red background pill
+    draw.rounded_rectangle([rect_x1, rect_y1, rect_x2, rect_y2], radius=6, fill=(220, 38, 38))
+    # White text
+    draw.text((rect_x1 + pad_x, rect_y1 + pad_y), label, font=badge_font, fill=(255, 255, 255))
+    return img
 
 
 def draw_text_with_stroke(draw, position, text, font, fill, stroke_fill, stroke_width):
@@ -290,7 +299,7 @@ def main():
 
     strategy_path = args.strategy_file or DEFAULT_STRATEGY_PATH
     strategy = load_strategy(strategy_path)
-    use_navy = bool(strategy.get("thumbnail_strategy"))
+    use_navy = False  # News/current events niche: use strong dark gradient, not navy
 
     api_key = os.getenv("PEXELS_API_KEY")
     if not api_key:
@@ -323,7 +332,9 @@ def main():
 
     segments = script.get("segments", [])
     sub_text = args.sub_text or (segments[0].get("overlay_text", "") if segments else "")
+    # Prefer thumbnail_person_query (face/figure) for higher CTR, fall back to hook footage query
     search_query = (args.search_query
+                    or script.get("thumbnail_person_query", "")
                     or (segments[0].get("pexels_search_query", "") if segments else "")
                     or script.get("pexels_search_query", main_text))
 
@@ -340,11 +351,14 @@ def main():
     # Resize to thumbnail dimensions
     img = resize_and_crop(img, THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT)
 
-    # Apply dark gradient overlay (navy tint when channel strategy is present)
+    # Apply dark gradient overlay
     img = apply_dark_gradient(img, use_navy=use_navy)
 
     # Add text overlays
     img = add_text_overlays(img, main_text, sub_text if sub_text else None)
+
+    # Add EXPLAINED badge in top-left corner
+    img = add_badge(img, label="EXPLAINED")
 
     # Save as JPEG
     os.makedirs(os.path.dirname(args.output_file), exist_ok=True)

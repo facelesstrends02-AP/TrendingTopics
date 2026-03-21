@@ -161,9 +161,11 @@ def build_prompt(idea, channel_name, strategy=None):
         "world":         "Explain the global event clearly — what's happening, who's involved, what's at stake.",
     }.get(category, "Explain this story clearly for a general, curious audience.")
 
-    return f"""Act as a professional YouTube scriptwriter specialized in retention optimization for news and current events content.
+    return f"""Act as a professional YouTube scriptwriter specialized in retention optimization for a current events explainer channel.
 
-This script is for a channel called "{channel_name}" covering trending world topics.
+CHANNEL IDENTITY: "{channel_name}" is the Implications Channel. Every video answers: "Something just happened — here's what it actually means for YOU." We do not just report events. We map world events to their direct personal consequences: the viewer's wallet, job, health, or rights. This is our only reason to exist and must be present in every script.
+
+This script is for a channel called "{channel_name}".
 Category: {category}
 Framing: {category_framing}
 
@@ -178,6 +180,11 @@ News search base: {news_query_base}
 
 Channel: {channel_name}
 
+IMPLICATIONS REQUIREMENT (non-negotiable):
+- Every script MUST contain an explicit "personal implication" moment — a sentence that directly translates the world event to the viewer's life. Example: "That means your gas bill could rise by $40-60 per month starting this summer." or "If you work in tech, this is the category of roles being cut first." or "Your personal location data is being sold to government agencies right now without your knowledge or consent."
+- The bridge and each point must answer: "Why does this matter to the person watching?" not just "What happened?"
+- The hook must state the personal consequence immediately, not just the event.
+
 RETENTION ENGINEERING REQUIREMENTS:
 - Total length: ~8-10 minutes spoken at natural pace (~130 words/min = 1040-1300 words total)
 - Format: Faceless channel — news images + stock footage + AI voiceover. Second-person ("you"), no "I" statements.
@@ -185,7 +192,9 @@ RETENTION ENGINEERING REQUIREMENTS:
 - Be factual and accurate. No speculation unless clearly framed as such.
 {voice_block}
 
-HOOK (first 5 seconds): Must be a PATTERN INTERRUPT — something unexpected, counterintuitive, or surprising that breaks the viewer's scroll. NOT a question. A bold statement, shocking stat, or tension-creating sentence.
+TITLE RULES: NEVER use a question mark in the title. State the implication confidently.
+
+HOOK (first 5 seconds): Must be a PATTERN INTERRUPT — something unexpected, counterintuitive, or surprising that breaks the viewer's scroll. NOT a question. A bold statement, shocking stat, or tension-creating sentence. In the hook text, immediately tease the payoff: "By the end of this video, you'll know exactly [specific thing viewer will understand/be able to do]." This creates a commitment loop.
 
 CURIOSITY LOOP: Open a loop in the hook that only gets resolved in point_4 — give viewers a reason to stay all the way through.
 
@@ -204,6 +213,7 @@ Return ONLY a valid JSON object with this exact structure:
   "idea_id": {idea['id']},
   "title": "{idea['title']}",
   "thumbnail_text": "SHORT THUMBNAIL TEXT (max 5 words, all caps, creates curiosity or tension)",
+  "thumbnail_person_query": "Pexels search query using the ACTUAL PERSON or iconic figure in this story (e.g. 'Donald Trump White House', 'Elon Musk Tesla factory', 'Jerome Powell Federal Reserve'). If no person, use the most iconic visual of the story. This drives thumbnail CTR.",
   "description": "YouTube video description (150-300 words, includes timestamps, relevant keywords, engagement CTA)",
   "tags": ["tag1", "tag2"],
   "category_id": "26",
@@ -230,13 +240,13 @@ Segment types in order: hook, bridge, context, point_1, pattern_interrupt_1, poi
 - hook: 15-20s, bold pattern interrupt
 - bridge: 20-30s, reinforce promise, tease content
 - context: 30-45s, set up the problem/premise
-- point_1: 75-90s, problem → insight → example → takeaway
+- point_1: 75-90s, problem → insight → example → takeaway. REQUIRED extra field: "chapter_title" (3-5 ALL CAPS words, max 30 chars, teases what this section reveals — e.g. "ECONOMIC FALLOUT", "WHO GETS HIT FIRST")
 - pattern_interrupt_1: 10-15s, rhetorical question or surprising stat (overlay_text is the key phrase). Optionally add "sfx": use "beep_0.5sec" for sharp stats or punchy 1-line questions, "bell" for reflective/insight moments. Omit "sfx" entirely for flowing transitions that don't need a sound cue.
-- point_2: 75-90s, deeper insight → example → takeaway
+- point_2: 75-90s, deeper insight → example → takeaway. REQUIRED extra field: "chapter_title" (same rules as point_1 — e.g. "THE HIDDEN SIGNAL", "RIPPLE EFFECTS")
 - pattern_interrupt_2: 10-15s, rhetorical question or surprising stat. Same "sfx" rule as pattern_interrupt_1.
-- point_3: 75-90s, insight → example → takeaway
+- point_3: 75-90s, insight → example → takeaway. REQUIRED extra field: "chapter_title" (same rules — e.g. "WHO CONTROLS THIS", "THE REAL COST")
 - pattern_interrupt_3: 10-15s, rhetorical question or surprising stat. Same "sfx" rule as pattern_interrupt_1.
-- point_4: 75-90s, payoff insight that resolves the curiosity loop from the hook
+- point_4: 75-90s, payoff insight that resolves the curiosity loop from the hook. REQUIRED extra field: "chapter_title" (same rules — e.g. "WHAT YOU CAN DO NOW", "THE BOTTOM LINE")
 - engagement: 20-30s, specific comment prompt question. Optionally add "sfx": "bell" if the moment calls for a soft chime to invite reflection. Omit if not needed.
 - cta: 30-45s, value-specific subscription CTA
 

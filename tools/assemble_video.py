@@ -38,19 +38,16 @@ WATERMARK_FONTSIZE = 36
 FADE_DURATION = 0.3
 SUB_CLIP_MIN = 3   # seconds: minimum cut duration
 SUB_CLIP_MAX = 6   # seconds: maximum cut duration
-CAPTION_FONTSIZE = 90
+CAPTION_FONTSIZE = 68           # 3/4 of original 90
 CAPTION_CHUNK_SIZE = 3
 OVERLAY_DISPLAY_DURATION = 4.5   # max seconds to show overlay text
 OVERLAY_REVEAL_DURATION  = 0.5   # seconds for left-to-right wipe-in animation
 OVERLAY_MARGIN           = 60    # px from top-left edge
+OVERLAY_TEXT_COLOR       = (255, 215, 0, 255)  # #FFD700 yellow (matches Shorts palette)
+OVERLAY_MAX_TEXT_WIDTH   = TARGET_WIDTH - OVERLAY_MARGIN - 80  # wrap before right edge
 
 SFX_VOLUMES = {"riser": 0.40, "woosh": 0.50, "beep_0.5sec": 0.60, "beep_1sec": 0.60, "bell": 0.55}
-
-WATERMARK_FONT_CHAIN = [
-    "Arial-Bold", "ArialBold", "Futura-Bold", "FuturaBold",
-    "AvenirNext-Bold", "AvenirNextCondensed-Bold",
-    "DejaVuSans-Bold", "DejaVu Sans Bold",
-]
+CHAPTER_CARD_DURATION = 3.0   # seconds for each chapter transition card
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 
@@ -150,20 +147,23 @@ def make_reveal_text_clip(text, seg_duration, fontsize=OVERLAY_FONTSIZE, bg_opac
     """
     Render overlay_text at top-left with a left-to-right wipe-in animation.
     Shows for min(OVERLAY_DISPLAY_DURATION, seg_duration) seconds, then fades out.
-    Prepends a bullet point to the text.
+    Prepends a bullet point and wraps long text to avoid going off-screen right edge.
     """
     from moviepy import VideoClip
     from PIL import Image, ImageDraw, ImageFont
 
     display_dur = min(OVERLAY_DISPLAY_DURATION, seg_duration)
-    bullet_text = f"\u2022 {text}"
 
+    # Heavy/bold font for thick heading-style overlay
     font = None
     for fp in [
-        "/System/Library/Fonts/SFNSItalic.ttf",
-        "/System/Library/Fonts/Supplemental/Arial Bold Italic.ttf",
-        "/System/Library/Fonts/Supplemental/Trebuchet MS Bold Italic.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-BoldOblique.ttf",
+        "/System/Library/Fonts/Supplemental/Impact.ttf",
+        "/Library/Fonts/Impact.ttf",
+        "/System/Library/Fonts/Supplemental/Arial Black.ttf",
+        "/Library/Fonts/Arial Black.ttf",
+        "/System/Library/Fonts/Futura.ttc",
+        "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
     ]:
         try:
             font = ImageFont.truetype(fp, fontsize)
@@ -173,19 +173,44 @@ def make_reveal_text_clip(text, seg_duration, fontsize=OVERLAY_FONTSIZE, bg_opac
     if font is None:
         font = ImageFont.load_default()
 
+    # Greedy word-wrap: build lines that stay within OVERLAY_MAX_TEXT_WIDTH
     dummy = Image.new("RGBA", (1, 1))
-    bbox = ImageDraw.Draw(dummy).textbbox((0, 0), bullet_text, font=font)
-    text_w, text_h = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    dummy_draw = ImageDraw.Draw(dummy)
+
+    def _tw(t):
+        return dummy_draw.textbbox((0, 0), t, font=font)[2]
+
+    words = text.split()
+    lines = []
+    current = "\u2022 "
+    for word in words:
+        test = current + word
+        if _tw(test) <= OVERLAY_MAX_TEXT_WIDTH or current == "\u2022 ":
+            current = test + " "
+        else:
+            lines.append(current.rstrip())
+            current = "   " + word + " "   # indent continuation lines
+    if current.strip():
+        lines.append(current.rstrip())
+    wrapped = "\n".join(lines)
+
     pad_x, pad_y = 30, 15
-    img_w, img_h = text_w + pad_x * 2, text_h + pad_y * 2
+    bbox = dummy_draw.textbbox((0, 0), wrapped, font=font)
+    text_w = bbox[2] - bbox[0]
+    text_h = bbox[3] - bbox[1]
+    img_w = text_w + pad_x * 2
+    img_h = text_h + pad_y + pad_y * 3   # extra bottom padding prevents descender clipping
 
     img = Image.new("RGBA", (img_w, img_h), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     draw.rounded_rectangle([0, 0, img_w - 1, img_h - 1], radius=12,
                             fill=(0, 0, 0, int(bg_opacity * 255)))
-    draw.text((pad_x, pad_y), bullet_text, font=font, fill=(255, 255, 255, 255))
+    # Anchor text so bbox top-left lands at (pad_x, pad_y), fixing font-specific offsets
+    tx = pad_x - bbox[0]
+    ty = pad_y - bbox[1]
+    draw.text((tx, ty), wrapped, font=font, fill=OVERLAY_TEXT_COLOR)
 
-    full_rgba  = np.array(img)                            # (H, W, 4)
+    full_rgba  = np.array(img)
     full_rgb   = full_rgba[:, :, :3]
     full_alpha = full_rgba[:, :, 3].astype(np.float32) / 255.0
     width      = full_rgb.shape[1]
@@ -212,32 +237,112 @@ def make_reveal_text_clip(text, seg_duration, fontsize=OVERLAY_FONTSIZE, bg_opac
     return clip
 
 
-def make_watermark(channel_name, total_duration):
-    """Create channel watermark clip, trying multiple fonts in order."""
-    from moviepy import TextClip
-    import moviepy.video.fx as vfx
+def make_chapter_transition_card(text, duration=CHAPTER_CARD_DURATION):
+    """
+    Full-frame black screen with centered bold white chapter title.
+    Fades in over 0.3s, holds, then fades out over 0.3s.
+    Inserted before each point_N segment to signal a new section.
+    Uses ImageClip (not VideoClip) so .size is properly declared and the
+    card reliably covers the full frame in CompositeVideoClip.
+    """
+    from PIL import Image, ImageDraw, ImageFont
 
-    def _apply_watermark_effects(wm):
-        wm = wm.with_opacity(0.3)
-        wm = wm.with_duration(total_duration)
-        wm = wm.with_position(("right", "top"))
-        wm = wm.with_effects([vfx.Margin(right=30, top=20, opacity=0)])
-        return wm
+    W, H = TARGET_WIDTH, TARGET_HEIGHT
+    FONTSIZE = 90
+    FADE = 0.3
 
-    for font_name in WATERMARK_FONT_CHAIN:
+    font = None
+    for fp in [
+        "/System/Library/Fonts/Supplemental/Impact.ttf",
+        "/Library/Fonts/Impact.ttf",
+        "/System/Library/Fonts/Futura.ttc",
+        "/Library/Fonts/Futura.ttc",
+        "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    ]:
         try:
-            wm = TextClip(text=channel_name, font_size=WATERMARK_FONTSIZE,
-                          color="white", font=font_name)
-            return _apply_watermark_effects(wm)
+            font = ImageFont.truetype(fp, FONTSIZE)
+            break
         except Exception:
-            continue
+            pass
+    if font is None:
+        font = ImageFont.load_default()
 
-    # Final fallback: no font kwarg (moviepy default)
+    img = Image.new("RGB", (W, H), (0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    bbox = draw.textbbox((0, 0), text, font=font)
+    tw = bbox[2] - bbox[0]
+    th = bbox[3] - bbox[1]
+    # Anchor text so bbox top-left lands at center, avoiding descender offset
+    tx = (W - tw) // 2 - bbox[0]
+    ty = (H - th) // 2 - bbox[1]
+    draw.text((tx, ty), text, font=font, fill=(255, 255, 255))
+    frame_arr = np.array(img)  # shape (H, W, 3)
+
+    def make_frame(t):
+        if t < FADE:
+            alpha = t / FADE
+        elif t > duration - FADE:
+            alpha = max((duration - t) / FADE, 0.0)
+        else:
+            alpha = 1.0
+        return (frame_arr * alpha).astype(np.uint8)
+
+    from moviepy import VideoClip as VC
+    return VC(make_frame, duration=duration).with_position((0, 0))
+
+
+def make_watermark(channel_name, total_duration):
+    """
+    Create channel watermark using PIL so descenders (y, g, p) are never clipped.
+    Positioned top-right with 30px horizontal and 20px vertical margin.
+    """
+    from moviepy import ImageClip
+    from PIL import Image, ImageDraw, ImageFont
+
+    font = None
+    for fp in [
+        "/System/Library/Fonts/Futura.ttc",
+        "/Library/Fonts/Futura.ttc",
+        "/System/Library/Fonts/AvenirNext.ttc",
+        "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    ]:
+        try:
+            font = ImageFont.truetype(fp, WATERMARK_FONTSIZE)
+            break
+        except Exception:
+            pass
+    if font is None:
+        font = ImageFont.load_default()
+
+    dummy = Image.new("RGBA", (1, 1))
+    bbox = ImageDraw.Draw(dummy).textbbox((0, 0), channel_name, font=font)
+    text_w = bbox[2] - bbox[0]
+    text_h = bbox[3] - bbox[1]
+
+    pad_x, pad_y = 6, 4
+    img_w = text_w + pad_x * 2
+    img_h = text_h + pad_y + pad_y * 3   # generous bottom padding for descenders
+
+    img = Image.new("RGBA", (img_w, img_h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    tx = pad_x - bbox[0]
+    ty = pad_y - bbox[1]
+    draw.text((tx, ty), channel_name, font=font, fill=(255, 255, 255, 255))
+
+    img_arr = np.array(img)
+    x_pos = TARGET_WIDTH - img_w - 30
+    y_pos = 20
+
     try:
-        wm = TextClip(text=channel_name, font_size=WATERMARK_FONTSIZE, color="white")
-        return _apply_watermark_effects(wm)
+        wm = (ImageClip(img_arr, is_mask=False)
+              .with_duration(total_duration)
+              .with_opacity(0.3)
+              .with_position((x_pos, y_pos)))
+        return wm
     except Exception as e:
-        print(f"  WARNING: Could not create watermark with any font: {e}", file=sys.stderr)
+        print(f"  WARNING: Could not create watermark: {e}", file=sys.stderr)
         return None
 
 
@@ -730,13 +835,32 @@ def main():
         print("Concatenating segments...", file=sys.stderr)
         final_video = concatenate_videoclips(segment_clips, method="compose")
 
-    # Build text overlay clips — top-left, bullet point, left-to-right reveal
-    # No conflict with bottom-center captions so no captions guard needed
+    # Chapter transition cards — full-frame overlays at the start of each point_N segment.
+    # Rendered as overlays (not inserted into the timeline) so voiceover and captions stay in sync.
     overlay_clips = []
+    # Track which segment indices have a chapter card, so overlay text can be delayed past it.
+    chapter_card_seg_indices = set()
+    for i, (seg, duration) in enumerate(zip(valid_segments, segment_durations)):
+        chapter_title = seg.get("chapter_title", "")
+        if seg.get("type", "").startswith("point_") and chapter_title:
+            start_time = sum(segment_durations[:i])
+            try:
+                card = make_chapter_transition_card(chapter_title)
+                overlay_clips.append(card.with_start(start_time))
+                chapter_card_seg_indices.add(i)
+                print(f"  Chapter card: \"{chapter_title}\" at t={start_time:.1f}s", file=sys.stderr)
+            except Exception as e:
+                print(f"  WARNING: Chapter card failed for '{chapter_title}': {e}", file=sys.stderr)
+
+    # Build text overlay clips — top-left, bullet point, left-to-right reveal
+    # Delayed by CHAPTER_CARD_DURATION when the segment starts with a chapter card.
     for i, (seg_idx, text, duration) in enumerate(text_clips_by_segment):
         start_time = sum(segment_durations[:seg_idx])
+        chapter_offset = CHAPTER_CARD_DURATION if seg_idx in chapter_card_seg_indices else 0.0
+        start_time += chapter_offset
+        adjusted_duration = max(duration - chapter_offset, 1.0)
         try:
-            txt_clip = make_reveal_text_clip(text, seg_duration=duration)
+            txt_clip = make_reveal_text_clip(text, seg_duration=adjusted_duration)
             txt_clip = txt_clip.with_start(start_time)
             overlay_clips.append(txt_clip)
         except Exception as e:
@@ -792,7 +916,10 @@ def main():
 
     # Compose final video with overlays
     if overlay_clips:
-        final_video = CompositeVideoClip([final_video] + overlay_clips)
+        final_video = CompositeVideoClip(
+            [final_video] + overlay_clips,
+            size=(TARGET_WIDTH, TARGET_HEIGHT),
+        )
 
     # Add audio
     voiceover = AudioFileClip(args.audio_file)

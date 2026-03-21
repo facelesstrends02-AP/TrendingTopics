@@ -152,24 +152,32 @@ Apply these insights: double down on what worked, avoid what flopped.
 
     strategy_section = build_strategy_section(strategy)
 
-    return f"""Act as a YouTube trend researcher and viral content strategist for a trending news and events channel called "{channel_name}".
+    return f"""Act as a YouTube trend researcher and viral content strategist for a current events explainer channel called "{channel_name}".
 
-This channel covers ANY topic that is trending in the world — politics, technology, finance, science, sports, entertainment, and global events. The audience is curious, news-aware adults who want insightful, well-explained video content on things happening right now.
+CHANNEL IDENTITY: This channel's single positioning is "Something just happened in the world — here's what it actually means for YOU." Every video maps a world event to a direct personal consequence: the viewer's wallet, job security, health, rights, or daily life. We are the implications channel. We do not just explain the news — we explain what the news COSTS or CHANGES for the average person.
+
+The audience is news-curious adults 25-45 who are tired of headlines without context and want to understand the downstream effects of world events on their own lives.
 
 Generate {count} high-potential video ideas that will perform well on YouTube in the next 2-5 days.
 {topic_section}{trending_section}{analytics_section}{strategy_section}
-Each idea must have a realistic path to 100k+ views. Prioritize:
-- Topics with CURRENT momentum (breaking or fast-developing stories)
-- Angles that explain WHY something matters to a general audience
-- Hooks that create immediate curiosity or emotional tension
-- Stories that have lasting search interest beyond the news cycle
+Each idea MUST have a clear personal consequence angle baked into the title and hook — not just "what happened" but "what this means for you." Prioritize:
+- Topics where there is an underexplained personal consequence (financial, health, job, rights)
+- Angles that translate big abstract events into household-level impact
+- Hooks built around the personal cost/risk/opportunity, not just the event itself
+- Stories with lasting search interest (people will still search for the implication weeks later)
 - Content suited for faceless format: stock footage + AI voiceover
 
-IMPORTANT: Spread ideas across multiple categories when possible — don't cluster everything in one topic area.
+IMPORTANT: Spread ideas across content pillars — Geopolitics/Finance, Power/Control, Science/Health, Tech. Do not cluster everything in one area.
+
+TITLE RULES (critical):
+- NEVER use a question mark in titles — audiences want confident analysis, not questions
+- Frame every title around personal consequence using "You" framing where natural: "What X Means for You", "How Y Is About to Cost You", "Why Z Will Change Your [wallet/job/rights]"
+- Use the formula: [Specific event with number/person] — [Personal consequence the viewer didn't know about]
+- Example: "Trump Threatens to Destroy 17% of World's Gas Supply — What Happens to Your Bills" NOT "Will Trump's Iran Threat Affect Gas Prices?"
 
 Return ONLY a valid JSON array with exactly {count} objects. Each object must have:
 - "id": integer 1-{count}
-- "title": scroll-stopping title (max 80 chars, use power words and tension)
+- "title": scroll-stopping title (max 80 chars, use power words and tension, NO question marks)
 - "hook": the core hook for the first 10 seconds — one punchy sentence that creates immediate curiosity (max 150 chars)
 - "angle": what makes this unique vs existing content, why viewers would choose this video (max 200 chars)
 - "category": one of: politics, tech, finance, science, sports, entertainment, world
@@ -179,6 +187,7 @@ Return ONLY a valid JSON array with exactly {count} objects. Each object must ha
 - "potential": one of: High, Medium, Low (based on search demand and viral likelihood)
 - "pexels_search_query": concrete stock footage query using specific nouns (e.g. "government building capitol crowd protest" not "politics")
 - "news_search_query": specific news search query to find relevant article images (e.g. "Federal Reserve interest rate March 2026")
+- "thumbnail_person_query": Pexels photo search query using the ACTUAL PERSON or recognizable figure in this story (e.g. "Donald Trump White House", "Elon Musk Tesla", "Jerome Powell Federal Reserve press conference"). If no specific person, use a recognizable visual symbol of the story (e.g. "Qatar gas field aerial", "Tesla car dashboard autonomous"). This must produce an attention-grabbing face or iconic visual for the thumbnail.
 - "content_format": one of: tutorial, breakdown, story, experiment, listicle
 - "viral_reason": why this topic has viral potential RIGHT NOW — trend momentum, cultural timing, or audience pain point (max 200 chars)
 
@@ -290,7 +299,7 @@ def main():
     required_fields = [
         "id", "title", "hook", "angle", "category", "target_emotion",
         "urgency", "controversy_level", "potential", "pexels_search_query",
-        "news_search_query", "content_format", "viral_reason",
+        "news_search_query", "thumbnail_person_query", "content_format", "viral_reason",
     ]
     cleaned = []
     for idea in ideas:

@@ -83,6 +83,18 @@ def build_seo_tactics_section(strategy):
     return "\n\n".join(parts) + "\n\n"
 
 
+def compute_segment_timestamps(segments):
+    """Return list of 'M:SS' timestamp strings, one per segment."""
+    timestamps = []
+    cumulative_seconds = 0
+    for seg in segments:
+        mins = cumulative_seconds // 60
+        secs = cumulative_seconds % 60
+        timestamps.append(f"{mins}:{secs:02d}")
+        cumulative_seconds += seg.get("duration_estimate", 20)
+    return timestamps
+
+
 def build_prompt(script, channel_name, strategy=None):
     title = script.get("title", "")
     description = script.get("description", "")
@@ -91,7 +103,7 @@ def build_prompt(script, channel_name, strategy=None):
     # Derive category from script idea metadata if present
     category = script.get("category", "world")
 
-    # Build segment summary for chapter markers
+    # Build segment summary — timestamps are deterministic, shown for context only
     segment_text = ""
     cumulative_seconds = 0
     for seg in segments:
@@ -124,7 +136,7 @@ Segments (for chapter markers):
 2. DESCRIPTION (150-250 words):
    - Open with the primary keyword naturally in the first sentence
    - 2-3 short paragraphs covering the video content
-   - Include chapter markers (timestamps from segment data above)
+   - Do NOT include timestamps — they will be added automatically
    - Add 3-5 semantic keyword phrases woven in naturally
    - End with a CTA to subscribe and a note about the channel covering trending world topics
    - Include relevant hashtags at the end (3-5)
@@ -133,11 +145,11 @@ Segments (for chapter markers):
 
 4. TAGS: 12-15 optimized tags. Mix of: exact match keyword, broad match, related topics, channel niche terms.
 
-5. CHAPTER MARKERS: SEO-optimized titles for each chapter. Keep them short (3-5 words), descriptive, and keyword-rich.
+5. CHAPTER TITLES: One SEO-optimized title per segment (in order). 4-6 words each, highly descriptive, keyword-rich. Label them as the IMPLICATION or KEY FACT, not the segment type. BAD: "Context", "Point 2", "Background". GOOD: "How Iran Sanctions Affect Gas Prices", "What Tesla Recall Means for Owners", "Why Dollar Is Losing Reserve Status". Each title should be a micro-keyword someone might actually search.
 
 6. RELATED VIDEO TOPICS: 5 specific video topic ideas that would appear in YouTube's "suggested videos" sidebar for this content — topics this channel could create to build internal linking momentum.
 
-7. SEARCH PHRASES: 5 exact phrases (how people search) that this video should rank for. Be specific and topical — not generic channel terms but dateable phrases tied to this specific story.
+7. SEARCH PHRASES: 5 exact phrases (how people search) that this video should rank for. Target LONG-TAIL IMPLICATION phrases, not broad news keywords CNN already owns. BAD: "Iran nuclear deal 2026". GOOD: "how Iran sanctions affect my gas prices 2026", "what happens to oil prices if Iran deal fails". These should be 4-7 word phrases with personal consequence framing that match the "implications for you" channel positioning.
 
 Return ONLY a valid JSON object:
 {{
@@ -146,10 +158,7 @@ Return ONLY a valid JSON object:
   "description": "full optimized description here",
   "semantic_keywords": ["keyword phrase 1", "keyword phrase 2"],
   "tags": ["tag1", "tag2"],
-  "chapter_markers": [
-    {{"timestamp": "0:00", "title": "short SEO title"}},
-    {{"timestamp": "0:15", "title": "short SEO title"}}
-  ],
+  "chapter_titles": ["SEO title for segment 1", "SEO title for segment 2"],
   "related_video_topics": ["topic 1", "topic 2", "topic 3", "topic 4", "topic 5"],
   "search_phrases": ["exact search phrase 1", "exact search phrase 2"],
   "updated_youtube": false
@@ -179,6 +188,43 @@ def get_youtube_service():
         with open(TOKEN_PATH, "w") as f:
             f.write(creds.to_json())
     return build("youtube", "v3", credentials=creds)
+
+
+def inject_chapters(description, chapter_markers):
+    """Inject a deterministic chapter block into the description.
+
+    Inserts before any trailing hashtags (lines starting with #), or appends
+    at the end. Strips any existing timestamp lines the LLM may have written
+    so we never get duplicates.
+    YouTube requires: first chapter at 0:00, at least 3 chapters.
+    """
+    if not chapter_markers:
+        return description
+
+    # Build the chapter block
+    lines = []
+    for ch in chapter_markers:
+        ts = ch.get("timestamp", "").strip()
+        title = ch.get("title", "").strip()
+        if ts and title:
+            lines.append(f"{ts} {title}")
+
+    if len(lines) < 3:
+        return description  # YouTube ignores chapters if fewer than 3
+
+    chapter_block = "\n".join(lines)
+
+    # Remove any existing timestamp lines from the LLM description
+    import re
+    cleaned = re.sub(r"^\d+:\d{2}[^\n]*\n?", "", description, flags=re.MULTILINE).strip()
+
+    # Find hashtag section at the end
+    hashtag_match = re.search(r"\n(#\S)", cleaned)
+    if hashtag_match:
+        split = hashtag_match.start()
+        return f"{cleaned[:split]}\n\n{chapter_block}\n\n{cleaned[split:].lstrip()}"
+    else:
+        return f"{cleaned}\n\n{chapter_block}"
 
 
 def update_youtube_video(video_id, seo_data, script):
@@ -287,6 +333,18 @@ def main():
                 print(f"ERROR: Could not parse SEO data: {e}", file=sys.stderr)
                 print(f"Raw: {raw[:500]}", file=sys.stderr)
                 sys.exit(1)
+
+    # Merge deterministic timestamps with LLM-generated titles
+    computed_timestamps = compute_segment_timestamps(script.get("segments", []))
+    chapter_titles = seo_data.pop("chapter_titles", [])
+    chapter_markers = [
+        {"timestamp": ts, "title": title}
+        for ts, title in zip(computed_timestamps, chapter_titles)
+    ]
+    seo_data["chapter_markers"] = chapter_markers
+
+    # Inject chapter block into description
+    seo_data["description"] = inject_chapters(seo_data["description"], chapter_markers)
 
     seo_data["generated_at"] = datetime.now(timezone.utc).isoformat()
     seo_data["updated_youtube"] = False

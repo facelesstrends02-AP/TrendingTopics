@@ -2,7 +2,7 @@
 
 ## Objective
 
-For each published long-form video, automatically generate 2 YouTube Shorts derived from its strongest news segments and schedule them for the day after the main video goes live. This maximises topical relevance while the story is still breaking.
+For each publishing day, automatically generate 2 YouTube Shorts on **independent trending topics** — completely decoupled from the week's full video — and schedule them for the day after the main video goes live. This maximises viral potential by targeting whatever is trending at trigger time, not just the topic of the long-form video.
 
 ---
 
@@ -34,7 +34,9 @@ IST to UTC: subtract 5 hours 30 minutes.
 ```
 shorts_scheduler.py
   └── shorts_agent.py --video-key video_1
-        ├── tools/generate_short_scripts.py    # Claude: 2 short scripts from full video script
+        ├── tools/scrape_trending_topics.py    # Refresh trending cache if > 6h old (free)
+        ├── tools/generate_short_ideas.py      # Claude: 2 fresh Short ideas from trending topics
+        ├── tools/generate_short_scripts.py    # Claude: 2 Short scripts from ideas (--ideas-file)
         ├── For each of 2 shorts:
         │   ├── tools/generate_voiceover.py    # OpenAI TTS → MP3
         │   ├── tools/assemble_short.py        # Pure ffmpeg → 1080×1920 portrait MP4
@@ -48,9 +50,11 @@ shorts_scheduler.py
 
 ## Source Selection
 
-`generate_short_scripts.py` reads the full video script JSON and filters to only `point_N` type segments (point_1 through point_4). It picks 2 points spread across the video — index 0 and the middle point — to ensure the 2 Shorts cover different topics from the same video.
+`generate_short_ideas.py` reads `trending_topics.json` (multi-source: Google Trends, NewsAPI, Reddit, RSS) and calls Claude to pick 2 topics best suited for the 45-60 second Shorts format — a single punchy fact/revelation, not a multi-point breakdown. The 2 ideas are chosen from different categories for variety.
 
-Segments skipped as Short sources: `hook`, `bridge`, `context`, `pattern_interrupt_*`, `engagement`, `cta`.
+`generate_short_scripts.py` is called with `--ideas-file` (independent mode), passing the 2 Short ideas directly instead of filtering point_N segments from the full video script.
+
+**Trending cache**: `shorts_agent.py` reuses `.tmp/trending_topics.json` if it is less than 6 hours old (Sunday's weekly scrape typically covers Mon/Wed/Fri trigger times). A fresh scrape runs automatically if the cache is stale.
 
 ---
 
@@ -146,11 +150,25 @@ The agent is **idempotent**: it skips shorts already in `status: scheduled` and 
 
 ### Reset and regenerate shorts plan only
 ```bash
-rm .tmp/shorts/video_1_shorts_plan.json
+rm .tmp/shorts/video_1_short_ideas.json .tmp/shorts/video_1_shorts_plan.json
 python agents/shorts_agent.py --video-key video_1
 ```
 
-### Generate shorts scripts standalone (no upload)
+### Generate Short ideas standalone (for testing)
+```bash
+python tools/generate_short_ideas.py \
+  --trending-file .tmp/trending_topics.json \
+  --output .tmp/shorts/video_1_short_ideas.json
+```
+
+### Generate Short scripts standalone from ideas (no upload)
+```bash
+python tools/generate_short_scripts.py \
+  --ideas-file .tmp/shorts/video_1_short_ideas.json \
+  --output .tmp/shorts/video_1_shorts_plan.json
+```
+
+### Generate Short scripts standalone from full video script (original mode, still supported)
 ```bash
 python tools/generate_short_scripts.py \
   --script-path .tmp/scripts/video_1_script.json \
@@ -178,11 +196,14 @@ Expected: `1080 1920 <≤60>`
 
 ---
 
-## Cost Estimate (per full video)
+## Cost Estimate (per publishing day)
 
 | Component | Cost |
 |---|---|
+| Trending scrape (free APIs) | $0 |
+| Claude Sonnet (generate_short_ideas.py) | ~$0.003 |
 | Claude Sonnet (generate_short_scripts.py) | ~$0.003 |
 | OpenAI TTS × 2 (≈200 words each) | ~$0.008 |
 | Pexels / YouTube API | $0 |
-| **Total per video** | **~$0.01** |
+| **Total per publishing day** | **~$0.014** |
+| **Per week (3 days)** | **~$0.042** |
