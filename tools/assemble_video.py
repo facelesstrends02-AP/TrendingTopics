@@ -47,7 +47,7 @@ OVERLAY_TEXT_COLOR       = (255, 215, 0, 255)  # #FFD700 yellow (matches Shorts 
 OVERLAY_MAX_TEXT_WIDTH   = TARGET_WIDTH - OVERLAY_MARGIN - 80  # wrap before right edge
 
 SFX_VOLUMES = {"riser": 0.40, "woosh": 0.50, "beep_0.5sec": 0.60, "beep_1sec": 0.60, "bell": 0.55}
-CHAPTER_CARD_DURATION = 3.0   # seconds for each chapter transition card
+CHAPTER_CARD_DURATION = 2.5   # seconds for each chapter transition card
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 
@@ -70,18 +70,28 @@ def get_audio_duration(audio_path):
         return float(json.loads(result.stdout)["format"]["duration"])
 
 
+def compute_content_durations(segments, total_audio_duration):
+    """Pure proportional durations — maps each segment to its share of the voiceover."""
+    total_estimate = sum(max(s.get("duration_estimate", 15), 1) for s in segments)
+    return [
+        max((max(s.get("duration_estimate", 15), 1) / total_estimate) * total_audio_duration, 2.0)
+        for s in segments
+    ]
+
+
 def calculate_segment_durations(segments, total_audio_duration):
     """
-    Distribute total audio duration across segments proportionally
-    based on each segment's duration_estimate weight.
+    Distribute total audio duration across segments proportionally.
+    Chapter card segments get CHAPTER_CARD_DURATION added so the footage
+    window covers the silent pause at the start of that segment.
     """
-    total_estimate = sum(max(s.get("duration_estimate", 15), 1) for s in segments)
-    durations = []
-    for seg in segments:
-        weight = max(seg.get("duration_estimate", 15), 1)
-        duration = (weight / total_estimate) * total_audio_duration
-        durations.append(max(duration, 2.0))  # minimum 2 seconds
-    return durations
+    content_durs = compute_content_durations(segments, total_audio_duration)
+    return [
+        dur + (CHAPTER_CARD_DURATION
+               if seg.get("type", "").startswith("point_") and seg.get("chapter_title")
+               else 0.0)
+        for seg, dur in zip(segments, content_durs)
+    ]
 
 
 def make_text_clip(text, duration, position, fontsize, color="white", bg_opacity=0.6):
@@ -642,6 +652,134 @@ def assemble_segment_with_cuts(clip_paths, total_duration, segment_id):
     return segment_clip
 
 
+def find_chapter_content_start(captions_words, seg_text, estimated_start, search_window=20.0):
+    """Find the timestamp just before the first spoken words of seg_text in captions.
+
+    Matches the first 2 words of the segment text (case-insensitive, punctuation-stripped)
+    against captions words within search_window seconds of estimated_start.
+
+    Returns the end-time of the last caption word BEFORE the chapter begins, or None.
+    """
+    import re
+
+    def clean(w):
+        return re.sub(r"[^\w]", "", w.lower())
+
+    # Clean segment text and extract first words, skipping "Point N:" prefix
+    raw = re.sub(r"[^\w\s]", " ", seg_text.lower()).split()
+    if len(raw) >= 2 and raw[0] == "point" and raw[1] in (
+        "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "1", "2", "3", "4", "5"
+    ):
+        raw = raw[2:]
+    search_seq = raw[:3]
+
+    if len(search_seq) < 2:
+        return None
+
+    t_min = max(0.0, estimated_start - search_window)
+    t_max = estimated_start + search_window
+    candidates = [i for i, w in enumerate(captions_words) if t_min <= w["start"] <= t_max]
+
+    for ci in candidates:
+        if ci + 1 >= len(captions_words):
+            continue
+        if (clean(captions_words[ci]["word"]) == search_seq[0] and
+                clean(captions_words[ci + 1]["word"]) == search_seq[1]):
+            return captions_words[ci - 1]["end"] if ci > 0 else captions_words[ci]["start"]
+
+    return None
+
+
+def find_pause_near(captions_words, target_time, search_window=10.0, min_gap=0.15):
+    """Find the end-time of the word just before the largest inter-word pause near target_time.
+
+    A gap ≥ min_gap seconds between consecutive words usually marks a sentence boundary.
+    Returns None if no suitable pause found.
+    """
+    t_min = max(0.0, target_time - search_window)
+    t_max = target_time + search_window
+    best_gap = 0.0
+    best_end = None
+    for i in range(len(captions_words) - 1):
+        w1 = captions_words[i]
+        w2 = captions_words[i + 1]
+        if w1["end"] < t_min or w1["start"] > t_max:
+            continue
+        gap = w2["start"] - w1["end"]
+        if gap > best_gap:
+            best_gap = gap
+            best_end = w1["end"]
+    return best_end if best_gap >= min_gap else None
+
+
+def build_chapter_pause_audio(voiceover, insertion_points):
+    """Insert silence at pre-computed insertion_points into the voiceover.
+
+    Instead of muting (which drops words), we PAUSE: split the voiceover at a sentence
+    boundary, insert CHAPTER_CARD_DURATION of silence, then resume.  No words are lost.
+    """
+    from moviepy import concatenate_audioclips
+    from moviepy.audio.AudioClip import AudioClip
+
+    if not insertion_points:
+        return voiceover
+
+    nchannels = voiceover.nchannels
+    fps = voiceover.fps
+
+    def make_silence(dur):
+        def frame(t):
+            t = np.atleast_1d(t)
+            return np.zeros((len(t), nchannels))
+        return AudioClip(frame_function=frame, duration=dur, fps=fps)
+
+    pieces = []
+    cursor = 0.0
+    for ins_time, silence_dur in sorted(insertion_points):
+        ins_time = max(ins_time, cursor)
+        end = min(ins_time, voiceover.duration)
+        if end > cursor:
+            pieces.append(voiceover.subclipped(cursor, end))
+        pieces.append(make_silence(silence_dur))
+        cursor = ins_time
+
+    if cursor < voiceover.duration:
+        pieces.append(voiceover.subclipped(cursor))
+
+    return concatenate_audioclips(pieces)
+
+
+def shift_captions(chunks, insertion_points):
+    """Shift caption chunk timestamps forward by cumulative silence durations.
+
+    Captions that fall inside a silence window are suppressed (no audio → no text).
+    """
+    if not insertion_points:
+        return chunks
+
+    sorted_ins = sorted(insertion_points)
+
+    # Compute video-time silence windows for suppression
+    silence_windows = []
+    cumulative = 0.0
+    for ins_t, dur in sorted_ins:
+        v_start = ins_t + cumulative
+        silence_windows.append((v_start, v_start + dur))
+        cumulative += dur
+
+    shifted = []
+    for chunk in chunks:
+        t = chunk["start"]
+        shift = sum(dur for ins_t, dur in insertion_points if ins_t <= t)
+        v_start = t + shift
+        v_end = chunk["end"] + shift
+        # Suppress captions that fall inside a silence/chapter card window
+        if any(ws <= v_start < we for ws, we in silence_windows):
+            continue
+        shifted.append({"text": chunk["text"], "start": v_start, "end": v_end})
+    return shifted
+
+
 def build_sfx_events(valid_segments, segment_durations):
     """Return list of (start_time_seconds, sfx_name) based on segment type."""
     events = []
@@ -690,8 +828,8 @@ def main():
     parser.add_argument("--footage-dir", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--captions-file", default=None, help="Optional path to word-level captions JSON")
-    parser.add_argument("--batch-size", type=int, default=5,
-                        help="Segments per batch when 15+ segments present (prevents OOM)")
+    parser.add_argument("--batch-size", type=int, default=3,
+                        help="Segments per batch when 5+ segments present (prevents OOM)")
     args = parser.parse_args()
 
     for path, name in [(args.script_file, "Script"), (args.audio_file, "Audio"),
@@ -722,11 +860,36 @@ def main():
 
     print(f"Assembling {len(valid_segments)} segments...", file=sys.stderr)
 
+    # Load captions words early — needed for sentence boundary detection during audio build
+    captions_words_raw = []
+    if args.captions_file and os.path.exists(args.captions_file):
+        with open(args.captions_file) as f:
+            captions_words_raw = json.load(f)
+
     # Get total audio duration and distribute across segments
     total_audio = get_audio_duration(args.audio_file)
     print(f"Total audio duration: {total_audio:.1f}s", file=sys.stderr)
 
+    content_durations = compute_content_durations(valid_segments, total_audio)
     segment_durations = calculate_segment_durations(valid_segments, total_audio)
+
+    # Pre-compute chapter pause insertion points (needed for captions AND audio)
+    _audio_cursor = 0.0
+    insertion_points = []
+    for _seg, _cdur in zip(valid_segments, content_durations):
+        if _seg.get("type", "").startswith("point_") and _seg.get("chapter_title"):
+            _natural = _audio_cursor
+            _boundary = find_chapter_content_start(
+                captions_words_raw, _seg.get("text", ""), _natural
+            ) if captions_words_raw else None
+            if _boundary is None and captions_words_raw:
+                _boundary = find_pause_near(captions_words_raw, _natural)
+            _ins = _boundary if _boundary is not None else _natural
+            _method = "word match" if _boundary and _boundary != _natural else (
+                "pause detect" if _boundary else "fallback")
+            insertion_points.append((_ins, CHAPTER_CARD_DURATION))
+            print(f"  Chapter pause: \"{_seg.get('chapter_title')}\" silence at {_ins:.1f}s ({_method})", file=sys.stderr)
+        _audio_cursor += _cdur
 
     from moviepy import (
         AudioFileClip,
@@ -739,7 +902,7 @@ def main():
         os.makedirs(output_dir, exist_ok=True)
 
     text_clips_by_segment = []
-    use_batch_mode = len(valid_segments) >= 15
+    use_batch_mode = len(valid_segments) >= 5
     batch_tmp_dir = None
 
     def _build_one_segment(seg, duration, global_i):
@@ -788,7 +951,7 @@ def main():
                   file=sys.stderr)
             bv = concatenate_videoclips(batch_clips, method="compose")
             bv.write_videofile(partial_path, codec="libx264", audio=False,
-                               fps=FPS, preset="medium", threads=4, logger=None)
+                               fps=FPS, preset="fast", threads=2, logger=None)
             for c in batch_clips:
                 try: c.close()
                 except Exception: pass
@@ -835,19 +998,27 @@ def main():
         print("Concatenating segments...", file=sys.stderr)
         final_video = concatenate_videoclips(segment_clips, method="compose")
 
-    # Chapter transition cards — full-frame overlays at the start of each point_N segment.
-    # Rendered as overlays (not inserted into the timeline) so voiceover and captions stay in sync.
+    # Chapter transition cards — full-frame overlays positioned at the actual audio silence time.
+    # video_time of j-th card = ins_time_j + sum(prior silence durations)
     overlay_clips = []
-    # Track which segment indices have a chapter card, so overlay text can be delayed past it.
-    chapter_card_seg_indices = set()
+    # Maps seg_idx -> chapter card video start time, for text overlay alignment.
+    chapter_card_start_times = {}
+    chapter_card_idx = 0
+    prior_silence_total = 0.0
     for i, (seg, duration) in enumerate(zip(valid_segments, segment_durations)):
         chapter_title = seg.get("chapter_title", "")
         if seg.get("type", "").startswith("point_") and chapter_title:
-            start_time = sum(segment_durations[:i])
+            if chapter_card_idx < len(insertion_points):
+                ins_time, silence_dur = insertion_points[chapter_card_idx]
+                start_time = ins_time + prior_silence_total
+                prior_silence_total += silence_dur
+            else:
+                start_time = sum(segment_durations[:i])  # fallback if no insertion point
+            chapter_card_idx += 1
+            chapter_card_start_times[i] = start_time
             try:
                 card = make_chapter_transition_card(chapter_title)
                 overlay_clips.append(card.with_start(start_time))
-                chapter_card_seg_indices.add(i)
                 print(f"  Chapter card: \"{chapter_title}\" at t={start_time:.1f}s", file=sys.stderr)
             except Exception as e:
                 print(f"  WARNING: Chapter card failed for '{chapter_title}': {e}", file=sys.stderr)
@@ -855,9 +1026,12 @@ def main():
     # Build text overlay clips — top-left, bullet point, left-to-right reveal
     # Delayed by CHAPTER_CARD_DURATION when the segment starts with a chapter card.
     for i, (seg_idx, text, duration) in enumerate(text_clips_by_segment):
-        start_time = sum(segment_durations[:seg_idx])
-        chapter_offset = CHAPTER_CARD_DURATION if seg_idx in chapter_card_seg_indices else 0.0
-        start_time += chapter_offset
+        if seg_idx in chapter_card_start_times:
+            start_time = chapter_card_start_times[seg_idx] + CHAPTER_CARD_DURATION
+            chapter_offset = CHAPTER_CARD_DURATION
+        else:
+            start_time = sum(segment_durations[:seg_idx])
+            chapter_offset = 0.0
         adjusted_duration = max(duration - chapter_offset, 1.0)
         try:
             txt_clip = make_reveal_text_clip(text, seg_duration=adjusted_duration)
@@ -867,11 +1041,10 @@ def main():
             print(f"  WARNING: Text overlay failed for segment {seg_idx}: {e}", file=sys.stderr)
 
     # Word-by-word captions
-    if args.captions_file and os.path.exists(args.captions_file):
+    if captions_words_raw:
         print("Adding word-by-word captions...", file=sys.stderr)
-        with open(args.captions_file) as f:
-            words = json.load(f)
-        chunks = group_words_into_chunks(words)
+        chunks = group_words_into_chunks(captions_words_raw)
+        chunks = shift_captions(chunks, insertion_points)
 
         # Suppress captions during CTA segment if it has overlay_text (avoid clutter)
         cta_no_caption_start = None
@@ -921,8 +1094,9 @@ def main():
             size=(TARGET_WIDTH, TARGET_HEIGHT),
         )
 
-    # Add audio
+    # Add audio — insert silence at sentence boundaries before chapter cards (no words lost)
     voiceover = AudioFileClip(args.audio_file)
+    voiceover = build_chapter_pause_audio(voiceover, insertion_points)
 
     # SFX
     sfx_events = build_sfx_events(valid_segments, segment_durations)
@@ -974,7 +1148,7 @@ def main():
         audio_codec="aac",
         fps=FPS,
         preset="medium",
-        threads=4,
+        threads=2,
         logger="bar",
     )
 

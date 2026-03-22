@@ -121,7 +121,9 @@ Return ONLY a valid JSON object:
 {{
   "idea_id": {idea['id']},
   "title": "{idea['title']}",
-  "thumbnail_text": "SHORT THUMBNAIL TEXT (max 5 words, all caps)",
+  "thumbnail_text": "1–3 WORDS MAX, ALL CAPS — complement the title, don't repeat it (e.g. 'IT'S OVER', 'WHO PROFITS', '$40/MONTH')",
+  "thumbnail_face_query": "Pexels query for a face with STRONG emotion — shock, alarm, outrage, disbelief (e.g. 'shocked man face close up', 'person wide eyes alarmed'). Never neutral or smiling.",
+  "thumbnail_layout": "split_face_text | face_dominant | text_dominant — choose strongest for CTR",
   "description": "YouTube video description (100-150 words, keywords, engagement CTA)",
   "tags": ["tag1", "tag2"],
   "category_id": "26",
@@ -212,8 +214,10 @@ Return ONLY a valid JSON object with this exact structure:
 {{
   "idea_id": {idea['id']},
   "title": "{idea['title']}",
-  "thumbnail_text": "SHORT THUMBNAIL TEXT (max 5 words, all caps, creates curiosity or tension)",
+  "thumbnail_text": "1–3 WORDS MAX, ALL CAPS. Complement the title — never repeat it. The image carries the story; text adds one emotional spike, number, or tension word. Examples: 'IT'S OVER', '$40/MONTH', 'THEY KNEW', 'WHO PROFITS', 'TOO LATE'. Under 12 characters total is ideal. This text must be legible at 168×94px (phone thumbnail size).",
   "thumbnail_person_query": "Pexels search query using the ACTUAL PERSON or iconic figure in this story (e.g. 'Donald Trump White House', 'Elon Musk Tesla factory', 'Jerome Powell Federal Reserve'). If no person, use the most iconic visual of the story. This drives thumbnail CTR.",
+  "thumbnail_face_query": "Pexels query for a FACE with a STRONG EMOTION matching the video's core tension. Neutral and smiling faces have the worst CTR — be specific about expression. Examples: 'shocked man face reaction close up', 'man outraged alarmed expression', 'person wide eyes fear close up', 'woman stunned disbelief face', 'businessman worried stressed face'. The emotion should match: shock/alarm for threat stories, outrage for injustice, disbelief for unexpected revelations.",
+  "thumbnail_layout": "choose the strongest layout for CTR: 'split_face_text' (face left + bold text right — highest CTR for news with a key person), 'face_dominant' (face fills frame, text overlay — use when the person IS the story and their face is recognizable), or 'text_dominant' (blurred/darkened image bg + hero text — use when no strong person visual). Default to split_face_text for most stories.",
   "description": "YouTube video description (150-300 words, includes timestamps, relevant keywords, engagement CTA)",
   "tags": ["tag1", "tag2"],
   "category_id": "26",
