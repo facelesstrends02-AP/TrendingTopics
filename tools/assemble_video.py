@@ -822,8 +822,6 @@ def build_sfx_events(valid_segments, segment_durations):
         seg_type = seg.get("type", "")
         if seg_type == "hook":
             events.append((cumulative, "riser"))
-        elif seg_type == "point_1":
-            events.append((cumulative, "woosh"))
         elif seg_type == "cta":
             events.append((cumulative, "woosh"))
         elif seg_type.startswith("pattern_interrupt") and seg.get("sfx"):
@@ -1104,6 +1102,9 @@ def main():
             except Exception as e:
                 print(f"  WARNING: Chapter card failed for '{chapter_title}': {e}", file=sys.stderr)
 
+    # Inject woosh SFX at each chapter card's visual start time
+    chapter_card_sfx = [(t, "woosh") for t in chapter_card_start_times.values()]
+
     # Build text overlay clips — top-left, bullet point, left-to-right reveal
     # Delayed by CHAPTER_CARD_DURATION when the segment starts with a chapter card.
     for i, (seg_idx, text, duration) in enumerate(text_clips_by_segment):
@@ -1180,7 +1181,7 @@ def main():
     voiceover = build_chapter_pause_audio(voiceover, insertion_points)
 
     # SFX
-    sfx_events = build_sfx_events(valid_segments, segment_durations)
+    sfx_events = build_sfx_events(valid_segments, segment_durations) + chapter_card_sfx
     sfx_dir = os.getenv("SFX_DIR", os.path.join(PROJECT_ROOT, "sfx")).strip()
     sfx_loaded = {}
     if sfx_dir and os.path.isdir(sfx_dir):
