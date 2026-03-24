@@ -159,6 +159,8 @@ CHANNEL IDENTITY: This channel's single positioning is "Something just happened 
 The audience is news-curious adults 25-45 who are tired of headlines without context and want to understand the downstream effects of world events on their own lives.
 
 Generate {count} high-potential video ideas that will perform well on YouTube in the next 2-5 days.
+
+RECENCY RULE: Strongly prefer events and stories from the last 7 days. Only draw on older events if the current week has fewer than 3 clearly high-impact topics — and in that case, only use older events that are still actively developing or generating fresh audience searches.
 {topic_section}{trending_section}{analytics_section}{strategy_section}
 Each idea MUST have a clear personal consequence angle baked into the title and hook — not just "what happened" but "what this means for you." Prioritize:
 - Topics where there is an underexplained personal consequence (financial, health, job, rights)

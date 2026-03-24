@@ -122,6 +122,7 @@ Return ONLY a valid JSON object:
   "idea_id": {idea['id']},
   "title": "{idea['title']}",
   "thumbnail_text": "1–3 WORDS MAX, ALL CAPS — complement the title, don't repeat it (e.g. 'IT'S OVER', 'WHO PROFITS', '$40/MONTH')",
+  "thumbnail_person_query": "Pexels/Wikimedia search query using the ACTUAL PERSON or iconic figure in this story (e.g. 'Jerome Powell Federal Reserve', 'Elon Musk Tesla'). Used for real CC-licensed images. If no person, use the most iconic visual.",
   "thumbnail_face_query": "Pexels query for a face with STRONG emotion — shock, alarm, outrage, disbelief (e.g. 'shocked man face close up', 'person wide eyes alarmed'). Never neutral or smiling.",
   "thumbnail_layout": "split_face_text | face_dominant | text_dominant — choose strongest for CTR",
   "description": "YouTube video description (100-150 words, keywords, engagement CTA)",

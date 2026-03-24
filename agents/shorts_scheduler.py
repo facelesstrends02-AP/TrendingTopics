@@ -84,19 +84,25 @@ def main():
             print(f"  {video_key}: no youtube_video_id yet, skipping.", file=sys.stderr)
             continue
 
-        # Launch shorts_agent.py as a non-blocking subprocess
-        cmd = [PYTHON, os.path.join(PROJECT_ROOT, "agents", "shorts_agent.py"),
-               "--video-key", video_key]
-        subprocess.Popen(cmd)
-        print(f"  Launched shorts_agent for {video_key} (publish date: {pub_date})",
-              file=sys.stderr)
-        launched += 1
-
-        # Mark as triggered immediately so re-runs don't double-launch
+        # Mark as triggered BEFORE running so a crash/re-run doesn't double-launch
         try:
             update_state({"videos": {video_key: {"shorts_scheduling_triggered": True}}})
         except Exception as e:
             print(f"  WARNING: Could not update state for {video_key}: {e}", file=sys.stderr)
+
+        # Run shorts_agent sequentially (blocking) — prevents parallel video assembly
+        # which would exhaust RAM and cause system restarts
+        cmd = [PYTHON, os.path.join(PROJECT_ROOT, "agents", "shorts_agent.py"),
+               "--video-key", video_key]
+        print(f"  Running shorts_agent for {video_key} (publish date: {pub_date})...",
+              file=sys.stderr)
+        result = subprocess.run(cmd, capture_output=False)
+        if result.returncode != 0:
+            print(f"  WARNING: shorts_agent for {video_key} exited with code {result.returncode}",
+                  file=sys.stderr)
+        else:
+            print(f"  shorts_agent for {video_key} complete.", file=sys.stderr)
+        launched += 1
 
     print(f"[shorts_scheduler] Launched {launched} shorts_agent process(es).")
 

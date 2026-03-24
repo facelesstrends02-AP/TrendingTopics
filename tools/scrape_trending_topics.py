@@ -482,8 +482,12 @@ def score_cluster(cluster: dict) -> float:
         recency = 1.5
     elif age_hours <= 24:
         recency = 1.2
-    else:
+    elif age_hours <= 72:
         recency = 1.0
+    elif age_hours <= 168:  # up to 7 days
+        recency = 0.7
+    else:
+        recency = 0.4
 
     diversity = min(len(cluster["unique_sources"]) / 2.0, 2.0)
     return cluster["total_weight"] * diversity * recency

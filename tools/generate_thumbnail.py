@@ -43,6 +43,10 @@ BRAND_ACCENT = (255, 215, 0)    # #FFD700 gold
 DARK_PANEL_BG = (10, 10, 10)    # near-black right panel
 
 FONT_PATHS_BOLD = [
+    os.path.join(PROJECT_ROOT, "fonts", "Poppins-SemiBold.ttf"),
+    os.path.join(PROJECT_ROOT, "fonts", "Montserrat.ttf"),
+    os.path.join(PROJECT_ROOT, "fonts", "Rubik.ttf"),
+    os.path.join(PROJECT_ROOT, "fonts", "Raleway.ttf"),
     "/System/Library/Fonts/Supplemental/Impact.ttf",
     "/usr/share/fonts/truetype/msttcorefonts/Impact.ttf",
     "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
@@ -51,6 +55,8 @@ FONT_PATHS_BOLD = [
     "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
 ]
 FONT_PATHS_REGULAR = [
+    os.path.join(PROJECT_ROOT, "fonts", "Raleway.ttf"),
+    os.path.join(PROJECT_ROOT, "fonts", "Montserrat.ttf"),
     "/System/Library/Fonts/Supplemental/Arial.ttf",
     "/System/Library/Fonts/Helvetica.ttc",
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",

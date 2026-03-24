@@ -14,6 +14,7 @@ Usage:
     python3 agents/production_agent.py
 """
 
+import fcntl
 import json
 import os
 import shutil
@@ -29,6 +30,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(__file__))
 TOOLS_DIR = os.path.join(PROJECT_ROOT, "tools")
 TMP_DIR = os.path.join(PROJECT_ROOT, ".tmp")
 PYTHON = sys.executable
+LOCK_FILE = os.path.join(TMP_DIR, "production_agent.lock")
 
 
 def run_tool(tool_name, args_list, capture_output=True):
@@ -296,6 +298,30 @@ def build_review_email(produced_videos, channel_name):
 
 
 def main():
+    # Lockfile: prevent two production_agent instances from running simultaneously.
+    # A second launch (e.g. cron race or manual re-run) exits immediately instead of
+    # starting a parallel video assembly that would exhaust RAM.
+    os.makedirs(TMP_DIR, exist_ok=True)
+    lock_fh = open(LOCK_FILE, "w")
+    try:
+        fcntl.flock(lock_fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        print("[production_agent] Another instance is already running. Exiting.", file=sys.stderr)
+        lock_fh.close()
+        sys.exit(0)
+
+    try:
+        _main()
+    finally:
+        fcntl.flock(lock_fh, fcntl.LOCK_UN)
+        lock_fh.close()
+        try:
+            os.remove(LOCK_FILE)
+        except OSError:
+            pass
+
+
+def _main():
     state = get_state()
     approved_ids = state.get("approved_idea_ids", [])
     channel_name = os.getenv("CHANNEL_NAME", "TrendingTopics")
@@ -320,9 +346,18 @@ def main():
     produced = {}
     failed = []
 
+    existing_videos = state.get("videos", {})
+
     for i, idea_id in enumerate(approved_ids, 1):
         video_key = f"video_{i}"
         print(f"\n[production_agent] Processing idea {idea_id} ({i}/{len(approved_ids)})...")
+
+        # Skip if already produced (e.g. re-run after partial completion)
+        existing = existing_videos.get(video_key, {})
+        if existing.get("youtube_video_id") and existing.get("status") in ("published", "uploaded_unlisted"):
+            print(f"  [SKIP] {video_key} already has YouTube ID {existing['youtube_video_id']} (status: {existing['status']}), skipping.")
+            produced[video_key] = existing
+            continue
 
         try:
             video_meta = produce_video(idea_id, video_key, ideas_path)

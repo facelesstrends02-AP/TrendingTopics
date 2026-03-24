@@ -66,6 +66,8 @@ CURRENTLY TRENDING (multi-source — Google Trends, news, Reddit, YouTube):
 
 Pick the 2 BEST topics from the trending list above that fit the Shorts format. Choose topics from different categories for variety.
 
+RECENCY RULE: Strongly prefer topics from the last 7 days. Only use older topics if the current week has fewer than 2 clearly high-impact, Shorts-suitable stories.
+
 TITLE RULES:
 - NEVER use a question mark
 - Lead with personal consequence: "What X Means for You", "How Y Is About to Cost You"

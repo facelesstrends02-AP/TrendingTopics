@@ -11,27 +11,28 @@ The pipeline runs every Sunday and produces 3 videos per week with minimal manua
 1. **Sunday 9pm** — Analytics agent fetches YouTube stats, generates insights, writes to Google Sheets, emails summary
 2. **Sunday 10pm** — Idea agent scrapes trending YouTube content, generates 10 ideas informed by past performance, writes to Google Sheets, emails you the list
 3. **You reply** `APPROVE: 1, 3, 7` — Approval poller detects your reply and queues selected ideas for production
-4. **Production agent** — Generates script (Claude Sonnet) → voiceover (OpenAI TTS) → footage (Pexels) → assembles video (moviepy) → uploads unlisted to YouTube → generates thumbnail → emails you the preview link
+4. **Production agent** — Generates script (Claude Sonnet) → voiceover (OpenAI TTS) → footage (Pexels + real CC-licensed images) → assembles video (moviepy, random font/color style per video) → uploads unlisted to YouTube → generates thumbnail → emails you the preview link
 5. **You reply** `APPROVE ALL` — Publisher agent makes videos public, logs them to the registry, done
 
 ---
 
 ## YouTube Shorts Pipeline
 
-For every published long-form video, the system automatically generates **2 YouTube Shorts** derived from its strongest news segments, scheduled for the day after the main video goes live.
+The system generates **2 YouTube Shorts** per week. They can be tied to a published long-form video or run standalone (e.g. a breaking news topic that doesn't warrant a full video).
 
 ### How it works
 
 1. **Shorts scheduler** (`agents/shorts_scheduler.py`) runs Mon/Wed/Fri at 11pm IST — 2 hours after the full video publishes
-2. **Shorts agent** (`agents/shorts_agent.py`) picks 2 `point_N` segments from the full video script (spread across the video for topic variety)
+2. **Shorts agent** (`agents/shorts_agent.py`) picks 2 `point_N` segments from the full video script (spread across the video for topic variety). Can also run standalone with `--video-key` omitted.
 3. **Per short:** generates a condensed script (Claude Sonnet) → voiceover (OpenAI TTS) → assembles portrait video (ffmpeg) → uploads to YouTube → schedules publish
 4. **Email notification** with both Short URLs is sent on completion
 
 ### Output format
 
 - **Resolution:** 1080 × 1920 (9:16 portrait, YouTube Shorts native)
-- **Duration:** ≤ 60 seconds
-- **Visual layers:** B-roll footage → per-sentence captions (rotating colors) → hook overlay (first 3.5s) → CTA overlay (last 8s)
+- **Duration:** ≤ 45 seconds (optimised for completion rate)
+- **Visual layers:** B-roll footage (Pexels + real CC-licensed images) → per-sentence captions → hook overlay (first 3.5s) → CTA overlay (last 6s)
+- **Visual style:** font and color palette are randomised per Short for visual variety
 
 ### Schedule
 

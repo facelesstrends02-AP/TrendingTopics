@@ -21,6 +21,7 @@ Usage:
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -44,6 +45,51 @@ def run_tool(tool_name, args_list, capture_output=True):
         stderr = result.stderr.strip() if result.stderr else ""
         raise RuntimeError(f"{tool_name} failed (exit {result.returncode}): {stderr}")
     return result.stdout.strip() if result.stdout else ""
+
+
+def cleanup_tmp():
+    """
+    Wipe all regenerable .tmp files at the start of each weekly cycle.
+
+    KEEPS (persistent / needed immediately after cleanup):
+      - published_videos_registry.json  — append-only, never regenerated
+      - analytics_insights.json         — written later this same run, read by idea_agent in 1h
+      - fonts/                          — cached font downloads, no need to re-download
+      - cron.log                        — continuous log, truncated not deleted
+
+    DELETES everything else:
+      - audio/, captions/, footage/, scripts/, output/, seo/, shorts/, thumbnails/
+      - ideas.json, trending_topics.json, state.json
+      - analytics_YYYY-MM-DD.json dated files (regenerated each week)
+    """
+    KEEP_FILES = {"published_videos_registry.json", "analytics_insights.json", "cron.log"}
+    KEEP_DIRS = {"fonts"}
+
+    deleted_bytes = 0
+
+    # Wipe subdirectories (except kept ones)
+    for entry in os.scandir(TMP_DIR):
+        if entry.is_dir() and entry.name not in KEEP_DIRS:
+            # Use os.walk to avoid building a full recursive path list in RAM
+            size = 0
+            for dirpath, _, filenames in os.walk(entry.path):
+                for fname in filenames:
+                    try:
+                        size += os.path.getsize(os.path.join(dirpath, fname))
+                    except OSError:
+                        pass
+            shutil.rmtree(entry.path, ignore_errors=True)
+            deleted_bytes += size
+            print(f"  rm -rf .tmp/{entry.name}/ ({size // 1024 // 1024} MB)")
+
+    # Wipe top-level files (except kept ones)
+    for entry in os.scandir(TMP_DIR):
+        if entry.is_file() and entry.name not in KEEP_FILES:
+            deleted_bytes += entry.stat().st_size
+            os.remove(entry.path)
+            print(f"  rm .tmp/{entry.name}")
+
+    print(f"  → Freed {deleted_bytes // 1024 // 1024} MB")
 
 
 def load_registry():
@@ -144,8 +190,13 @@ def main():
 
     print(f"[analytics_agent] Starting weekly analytics for '{niche}' (week {week_str})")
 
+    # ── Step 0: Weekly .tmp cleanup ──────────────────────────────────────────
+    print("[0/6] Cleaning up .tmp from last week...")
+    os.makedirs(TMP_DIR, exist_ok=True)
+    cleanup_tmp()
+
     # ── Step 1: Load Published Videos Registry ──────────────────────────────
-    print("[1/5] Loading published video registry...")
+    print("[1/6] Loading published video registry...")
     registry = load_registry()
 
     if not registry:
@@ -165,7 +216,7 @@ def main():
     print(f"  → {len(video_ids)} published video(s) in registry")
 
     # ── Step 2: Fetch Video Analytics ───────────────────────────────────────
-    print("[2/5] Fetching video analytics from YouTube...")
+    print("[2/6] Fetching video analytics from YouTube...")
     analytics_path = os.path.join(TMP_DIR, f"analytics_{week_str}.json")
     os.makedirs(TMP_DIR, exist_ok=True)
 
@@ -183,7 +234,7 @@ def main():
         analytics_path = None
 
     # ── Step 3: Analyze with Claude ─────────────────────────────────────────
-    print("[3/5] Analyzing performance with Claude Haiku...")
+    print("[3/6] Analyzing performance with Claude Haiku...")
     insights_path = os.path.join(TMP_DIR, "analytics_insights.json")
 
     if analytics_path and analytics:
@@ -204,7 +255,7 @@ def main():
         print("  → Skipped (no analytics data)")
 
     # ── Step 4: Write to Google Sheet ───────────────────────────────────────
-    print("[4/5] Writing to Google Sheet...")
+    print("[4/6] Writing to Google Sheet...")
     sheet_url = "[Sheet not configured]"
 
     if analytics and analytics_path:
@@ -225,7 +276,7 @@ def main():
         print("  → Skipped (no data or no sheet ID)")
 
     # ── Step 5: Send Email Summary ───────────────────────────────────────────
-    print("[5/5] Sending analytics email...")
+    print("[5/6] Sending analytics email...")
     email_body = build_analytics_email(analytics, insights, sheet_url, niche)
     subject = f"[YT Automation] Weekly Analytics - Week of {week_str}"
 

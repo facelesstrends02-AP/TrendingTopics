@@ -51,6 +51,41 @@ CHAPTER_CARD_DURATION = 2.5   # seconds for each chapter transition card
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 
+CAPTION_COLOR_POOL = [
+    (255, 215, 0, 255),   # gold
+    (255, 107, 107, 255), # coral
+    (0, 229, 204, 255),   # teal
+    (96, 165, 250, 255),  # sky blue
+    (167, 139, 250, 255), # soft purple
+    (52, 211, 153, 255),  # mint green
+    (251, 191, 36, 255),  # amber
+    (244, 114, 182, 255), # pink
+    (255, 255, 255, 255), # white
+]
+CAPTION_FONT_POOL = [
+    os.path.join(PROJECT_ROOT, "fonts", "Poppins-SemiBold.ttf"),
+    os.path.join(PROJECT_ROOT, "fonts", "Montserrat.ttf"),
+    os.path.join(PROJECT_ROOT, "fonts", "Rubik.ttf"),
+    os.path.join(PROJECT_ROOT, "fonts", "Raleway.ttf"),
+]
+
+# Set once per run by pick_video_style(); used by all text functions
+_VIDEO_FONT_PATH = None
+_VIDEO_COLOR_CAPTION = (255, 255, 255, 255)
+_VIDEO_COLOR_OVERLAY = (255, 215, 0, 255)
+_VIDEO_COLOR_CHAPTER = (255, 255, 255, 255)
+
+
+def pick_video_style():
+    global _VIDEO_FONT_PATH, _VIDEO_COLOR_CAPTION, _VIDEO_COLOR_OVERLAY, _VIDEO_COLOR_CHAPTER
+    available = [p for p in CAPTION_FONT_POOL if os.path.exists(p)]
+    _VIDEO_FONT_PATH = random.choice(available) if available else None
+    colors = random.sample(CAPTION_COLOR_POOL, min(3, len(CAPTION_COLOR_POOL)))
+    _VIDEO_COLOR_CAPTION, _VIDEO_COLOR_OVERLAY, _VIDEO_COLOR_CHAPTER = colors[0], colors[1], colors[2]
+    print(f"  Video style → font: {os.path.basename(_VIDEO_FONT_PATH or 'default')} | "
+          f"caption: {_VIDEO_COLOR_CAPTION} | overlay: {_VIDEO_COLOR_OVERLAY} | "
+          f"chapter: {_VIDEO_COLOR_CHAPTER}", file=sys.stderr)
+
 
 def is_image_file(path: str) -> bool:
     return os.path.splitext(path)[1].lower() in IMAGE_EXTENSIONS
@@ -102,17 +137,9 @@ def make_text_clip(text, duration, position, fontsize, color="white", bg_opacity
 
     # Render text using PIL for better control
     font = None
-    for font_path in [
-        "/System/Library/Fonts/Futura.ttc",
-        "/Library/Fonts/Futura.ttc",
-        "/System/Library/Fonts/AvenirNext.ttc",
-        "/System/Library/Fonts/Avenir Next.ttc",
-        "/System/Library/Fonts/Arial Bold.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-    ]:
+    if _VIDEO_FONT_PATH and os.path.exists(_VIDEO_FONT_PATH):
         try:
-            font = ImageFont.truetype(font_path, fontsize)
-            break
+            font = ImageFont.truetype(_VIDEO_FONT_PATH, fontsize)
         except Exception:
             pass
     if font is None:
@@ -166,18 +193,9 @@ def make_reveal_text_clip(text, seg_duration, fontsize=OVERLAY_FONTSIZE, bg_opac
 
     # Heavy/bold font for thick heading-style overlay
     font = None
-    for fp in [
-        "/System/Library/Fonts/Supplemental/Impact.ttf",
-        "/Library/Fonts/Impact.ttf",
-        "/System/Library/Fonts/Supplemental/Arial Black.ttf",
-        "/Library/Fonts/Arial Black.ttf",
-        "/System/Library/Fonts/Futura.ttc",
-        "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-    ]:
+    if _VIDEO_FONT_PATH and os.path.exists(_VIDEO_FONT_PATH):
         try:
-            font = ImageFont.truetype(fp, fontsize)
-            break
+            font = ImageFont.truetype(_VIDEO_FONT_PATH, fontsize)
         except Exception:
             pass
     if font is None:
@@ -218,7 +236,7 @@ def make_reveal_text_clip(text, seg_duration, fontsize=OVERLAY_FONTSIZE, bg_opac
     # Anchor text so bbox top-left lands at (pad_x, pad_y), fixing font-specific offsets
     tx = pad_x - bbox[0]
     ty = pad_y - bbox[1]
-    draw.text((tx, ty), wrapped, font=font, fill=OVERLAY_TEXT_COLOR)
+    draw.text((tx, ty), wrapped, font=font, fill=_VIDEO_COLOR_OVERLAY)
 
     full_rgba  = np.array(img)
     full_rgb   = full_rgba[:, :, :3]
@@ -262,17 +280,9 @@ def make_chapter_transition_card(text, duration=CHAPTER_CARD_DURATION):
     FADE = 0.3
 
     font = None
-    for fp in [
-        "/System/Library/Fonts/Supplemental/Impact.ttf",
-        "/Library/Fonts/Impact.ttf",
-        "/System/Library/Fonts/Futura.ttc",
-        "/Library/Fonts/Futura.ttc",
-        "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-    ]:
+    if _VIDEO_FONT_PATH and os.path.exists(_VIDEO_FONT_PATH):
         try:
-            font = ImageFont.truetype(fp, FONTSIZE)
-            break
+            font = ImageFont.truetype(_VIDEO_FONT_PATH, FONTSIZE)
         except Exception:
             pass
     if font is None:
@@ -286,7 +296,7 @@ def make_chapter_transition_card(text, duration=CHAPTER_CARD_DURATION):
     # Anchor text so bbox top-left lands at center, avoiding descender offset
     tx = (W - tw) // 2 - bbox[0]
     ty = (H - th) // 2 - bbox[1]
-    draw.text((tx, ty), text, font=font, fill=(255, 255, 255))
+    draw.text((tx, ty), text, font=font, fill=_VIDEO_COLOR_CHAPTER[:3])
     frame_arr = np.array(img)  # shape (H, W, 3)
 
     def make_frame(t):
@@ -311,16 +321,9 @@ def make_watermark(channel_name, total_duration):
     from PIL import Image, ImageDraw, ImageFont
 
     font = None
-    for fp in [
-        "/System/Library/Fonts/Futura.ttc",
-        "/Library/Fonts/Futura.ttc",
-        "/System/Library/Fonts/AvenirNext.ttc",
-        "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-    ]:
+    if _VIDEO_FONT_PATH and os.path.exists(_VIDEO_FONT_PATH):
         try:
-            font = ImageFont.truetype(fp, WATERMARK_FONTSIZE)
-            break
+            font = ImageFont.truetype(_VIDEO_FONT_PATH, WATERMARK_FONTSIZE)
         except Exception:
             pass
     if font is None:
@@ -421,17 +424,9 @@ def make_caption_chunk_clip(text, start, end):
     fontsize = CAPTION_FONTSIZE
 
     font = None
-    for font_path in [
-        "/System/Library/Fonts/Futura.ttc",
-        "/Library/Fonts/Futura.ttc",
-        "/System/Library/Fonts/AvenirNext.ttc",
-        "/System/Library/Fonts/Avenir Next.ttc",
-        "/System/Library/Fonts/Arial Bold.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-    ]:
+    if _VIDEO_FONT_PATH and os.path.exists(_VIDEO_FONT_PATH):
         try:
-            font = ImageFont.truetype(font_path, fontsize)
-            break
+            font = ImageFont.truetype(_VIDEO_FONT_PATH, fontsize)
         except Exception:
             pass
     if font is None:
@@ -464,8 +459,8 @@ def make_caption_chunk_clip(text, start, end):
             if dx != 0 or dy != 0:
                 draw.text((tx + dx, ty + dy), text, font=font, fill=(0, 0, 0, 255))
 
-    # White text on top
-    draw.text((tx, ty), text, font=font, fill=(255, 255, 255, 255))
+    # Caption text color (picked once per video)
+    draw.text((tx, ty), text, font=font, fill=_VIDEO_COLOR_CAPTION)
 
     # Position on the final composite: centred horizontally, ~82% down
     x_pos = (TARGET_WIDTH - img_w) // 2
@@ -500,7 +495,9 @@ def process_image_clip(image_path: str, needed_duration: float):
         img = img.crop((0, top, img.width, top + new_h))
     img = img.resize((TARGET_WIDTH, TARGET_HEIGHT), Image.LANCZOS)
 
-    clip = ImageClip(_np.array(img), is_mask=False).with_duration(needed_duration)
+    arr = _np.array(img)
+    img.close()  # release file descriptor immediately after numpy conversion
+    clip = ImageClip(arr, is_mask=False).with_duration(needed_duration)
     clip = apply_color_grade(clip)
     clip = clip.with_effects([vfx.Resize(make_zoom_fn(needed_duration, zoom_in=True))])
     return clip
@@ -514,8 +511,11 @@ def process_segment_clip(clip_path, needed_duration):
     from moviepy import VideoFileClip, concatenate_videoclips
     import moviepy.video.fx as vfx
 
-    clip = VideoFileClip(clip_path, audio=False)
-    clip = clip.with_effects([vfx.Resize((TARGET_WIDTH, TARGET_HEIGHT))])
+    # Track raw VideoFileClip so caller can close its ffmpeg decode subprocess explicitly.
+    # moviepy's ConcatenateClip.close() does NOT recursively close child VideoFileClips,
+    # so without explicit tracking the ffmpeg subprocesses accumulate across batches.
+    _raw_clip = VideoFileClip(clip_path, audio=False)
+    clip = _raw_clip.with_effects([vfx.Resize((TARGET_WIDTH, TARGET_HEIGHT))])
 
     if clip.duration < needed_duration:
         # Loop the clip
@@ -530,6 +530,8 @@ def process_segment_clip(clip_path, needed_duration):
     # Ken Burns + zoom punch at start
     clip = clip.with_effects([vfx.Resize(make_zoom_fn(needed_duration, zoom_in=True))])
 
+    # Attach raw clip for explicit cleanup by caller after rendering
+    clip._src_clips_to_close = [_raw_clip]
     return clip
 
 
@@ -560,7 +562,7 @@ def assemble_segment_with_cuts(clip_paths, total_duration, segment_id):
     from moviepy import VideoFileClip, concatenate_videoclips, ColorClip
     import moviepy.video.fx as vfx
 
-    # Single clip: delegate to original behavior
+    # Single clip: delegate to original behavior (it also sets _src_clips_to_close)
     if len(clip_paths) == 1:
         return process_segment_clip(clip_paths[0], total_duration)
 
@@ -582,6 +584,10 @@ def assemble_segment_with_cuts(clip_paths, total_duration, segment_id):
     # ── Step 3: Build sub-clips ───────────────────────────────────────────────
     sub_clips = []
     zoom_in = True  # alternate Ken Burns direction per cut
+    # Track all raw VideoFileClip objects so caller can close their ffmpeg decode
+    # subprocesses after rendering. moviepy's ConcatenateClip.close() does NOT
+    # recurse into child clips, so without this, ffmpeg processes accumulate.
+    src_clips_to_close = []
 
     for sub_idx, sub_duration in enumerate(sub_durations):
         clip_path = clip_paths[sub_idx % len(clip_paths)]
@@ -594,24 +600,50 @@ def assemble_segment_with_cuts(clip_paths, total_duration, segment_id):
                 sub_clips.append(sub_clip)
                 continue
 
-            src = VideoFileClip(clip_path, audio=False)
-            src = src.with_effects([vfx.Resize((TARGET_WIDTH, TARGET_HEIGHT))])
+            _raw_src = VideoFileClip(clip_path, audio=False)
+            src_clips_to_close.append(_raw_src)
+            src = _raw_src.with_effects([vfx.Resize((TARGET_WIDTH, TARGET_HEIGHT))])
 
-            # Determine start time for this sub-clip
+            # Determine start time — walk forward through clip, never replay same section
             if clip_path not in clip_offsets:
-                # First use: start in first 25% or first 5s, whichever is smaller
                 max_initial = min(src.duration * 0.25, 5.0)
                 clip_offsets[clip_path] = round(rng.uniform(0, max_initial), 2)
 
             start = clip_offsets[clip_path]
 
-            # Clamp: if we'd run past the end, wrap to near the beginning
+            # If this clip is exhausted, try cycling to another clip that still has runway
             if start + sub_duration > src.duration:
-                start = round(rng.uniform(0, min(2.0, src.duration * 0.1)), 2)
-                clip_offsets[clip_path] = start
+                # Find a different clip with enough remaining footage
+                fallback = None
+                for alt_path in clip_paths:
+                    if alt_path == clip_path or is_image_file(alt_path):
+                        continue
+                    alt_offset = clip_offsets.get(alt_path, 0.0)
+                    try:
+                        alt_src = VideoFileClip(alt_path, audio=False)
+                        alt_dur = alt_src.duration
+                        alt_src.close()
+                    except Exception:
+                        continue
+                    if alt_offset + sub_duration <= alt_dur:
+                        fallback = alt_path
+                        break
+
+                if fallback:
+                    # Switch to the fallback clip for this sub-clip
+                    src.close()
+                    clip_path = fallback
+                    _raw_src = VideoFileClip(clip_path, audio=False)
+                    src_clips_to_close.append(_raw_src)
+                    src = _raw_src.with_effects([vfx.Resize((TARGET_WIDTH, TARGET_HEIGHT))])
+                    start = clip_offsets.get(clip_path, 0.0)
+                else:
+                    # All clips exhausted — restart the current one from the beginning
+                    start = 0.0
+                    clip_offsets[clip_path] = 0.0
 
             # Advance offset for next use of this clip
-            clip_offsets[clip_path] = start + sub_duration + 2.0
+            clip_offsets[clip_path] = start + sub_duration + 1.0
 
             actual_end = min(start + sub_duration, src.duration)
             sub_clip = src.subclipped(start, actual_end)
@@ -649,6 +681,8 @@ def assemble_segment_with_cuts(clip_paths, total_duration, segment_id):
     if segment_clip.duration > total_duration + 0.1:
         segment_clip = segment_clip.subclipped(0, total_duration)
 
+    # Attach raw VideoFileClip list for explicit cleanup after rendering
+    segment_clip._src_clips_to_close = src_clips_to_close
     return segment_clip
 
 
@@ -897,12 +931,33 @@ def main():
         concatenate_videoclips,
     )
 
-    output_dir = os.path.dirname(args.output)
-    if output_dir:
-        os.makedirs(output_dir, exist_ok=True)
+    output_dir = os.path.dirname(args.output) or "."
+    os.makedirs(output_dir, exist_ok=True)
+
+    pick_video_style()
+
+    # ── Disk space guard ─────────────────────────────────────────────────────
+    _free_gb = shutil.disk_usage(output_dir).free / (1024 ** 3)
+    print(f"Disk free: {_free_gb:.1f} GB", file=sys.stderr)
+    if _free_gb < 20:
+        print(
+            f"ERROR: Only {_free_gb:.1f} GB disk free — need ≥20 GB for video assembly. "
+            "Free disk space first, then retry.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # ── Clean stale partials_tmp from any prior crashed run ──────────────────
+    _stale = os.path.join(output_dir, "partials_tmp")
+    if os.path.isdir(_stale):
+        shutil.rmtree(_stale, ignore_errors=True)
+        print("Cleaned stale partials_tmp from prior run.", file=sys.stderr)
 
     text_clips_by_segment = []
-    use_batch_mode = len(valid_segments) >= 5
+    # Always use batch mode regardless of segment count.
+    # The non-batch path holds ALL segment clips in memory simultaneously;
+    # batch mode writes each batch to disk and frees memory between batches.
+    use_batch_mode = True
     batch_tmp_dir = None
 
     def _build_one_segment(seg, duration, global_i):
@@ -931,32 +986,55 @@ def main():
         os.makedirs(batch_tmp_dir, exist_ok=True)
         partial_files = []
 
-        for batch_start in range(0, len(valid_segments), args.batch_size):
-            batch_end = min(batch_start + args.batch_size, len(valid_segments))
-            batch_segs = valid_segments[batch_start:batch_end]
-            batch_durs = segment_durations[batch_start:batch_end]
-            batch_clips = []
+        # try/finally ensures partials_tmp is cleaned up even if rendering crashes mid-run.
+        # (Stale partial files from a crash consume disk space and limit swap growth.)
+        _batch_failed = False
+        try:
+            for batch_start in range(0, len(valid_segments), args.batch_size):
+                batch_end = min(batch_start + args.batch_size, len(valid_segments))
+                batch_segs = valid_segments[batch_start:batch_end]
+                batch_durs = segment_durations[batch_start:batch_end]
+                batch_clips = []
 
-            for local_i, (seg, duration) in enumerate(zip(batch_segs, batch_durs)):
-                global_i = batch_start + local_i
-                vid_clip = _build_one_segment(seg, duration, global_i)
-                batch_clips.append(vid_clip)
-                overlay_text = seg.get("overlay_text")
-                if overlay_text:
-                    text_clips_by_segment.append((global_i, overlay_text, duration))
+                for local_i, (seg, duration) in enumerate(zip(batch_segs, batch_durs)):
+                    global_i = batch_start + local_i
+                    vid_clip = _build_one_segment(seg, duration, global_i)
+                    batch_clips.append(vid_clip)
+                    overlay_text = seg.get("overlay_text")
+                    if overlay_text:
+                        text_clips_by_segment.append((global_i, overlay_text, duration))
 
-            batch_num = batch_start // args.batch_size
-            partial_path = os.path.join(batch_tmp_dir, f"partial_{batch_num:03d}.mp4")
-            print(f"  Rendering batch {batch_num} to {os.path.basename(partial_path)}...",
-                  file=sys.stderr)
-            bv = concatenate_videoclips(batch_clips, method="compose")
-            bv.write_videofile(partial_path, codec="libx264", audio=False,
-                               fps=FPS, preset="fast", threads=2, logger=None)
-            for c in batch_clips:
-                try: c.close()
-                except Exception: pass
-            bv.close()
-            partial_files.append(partial_path)
+                batch_num = batch_start // args.batch_size
+                partial_path = os.path.join(batch_tmp_dir, f"partial_{batch_num:03d}.mp4")
+                print(f"  Rendering batch {batch_num} to {os.path.basename(partial_path)}...",
+                      file=sys.stderr)
+                bv = concatenate_videoclips(batch_clips, method="compose")
+                bv.write_videofile(partial_path, codec="libx264", audio=False,
+                                   fps=FPS, preset="fast", threads=2, logger=None)
+                # Explicitly close raw VideoFileClip objects (ffmpeg decode subprocesses).
+                # moviepy's ConcatenateClip.close() does NOT recurse into child clips,
+                # so without this, ffmpeg subprocesses accumulate across all batches.
+                for c in batch_clips:
+                    for raw in getattr(c, "_src_clips_to_close", []):
+                        try: raw.close()
+                        except Exception: pass
+                    try: c.close()
+                    except Exception: pass
+                bv.close()
+                del batch_clips, bv
+                import gc as _gc; _gc.collect()
+                partial_files.append(partial_path)
+
+        except Exception:
+            _batch_failed = True
+            raise
+
+        finally:
+            # If batch rendering failed, clean up immediately so disk space is freed.
+            # On success, we still need batch_tmp_dir for silent_combined — cleanup
+            # happens at the end of main() after the final render is done.
+            if _batch_failed and os.path.isdir(batch_tmp_dir):
+                shutil.rmtree(batch_tmp_dir, ignore_errors=True)
 
         if not partial_files:
             print("ERROR: No partial files rendered.", file=sys.stderr)
@@ -967,12 +1045,15 @@ def main():
         silent_combined = os.path.join(batch_tmp_dir, "silent_combined.mp4")
         with open(concat_list_path, "w") as cf:
             for pf in partial_files:
-                cf.write(f"file '{pf}'\n")
+                # ffmpeg concat demuxer resolves paths relative to the list file's directory,
+                # so use absolute paths to avoid path confusion.
+                cf.write(f"file '{os.path.abspath(pf)}'\n")
         print("Concatenating partial files with ffmpeg...", file=sys.stderr)
         subprocess.run(
             ["ffmpeg", "-y", "-f", "concat", "-safe", "0",
              "-i", concat_list_path, "-c", "copy", silent_combined],
-            check=True, capture_output=True,
+            check=True,
+            stdout=subprocess.DEVNULL,
         )
         for pf in partial_files:
             try: os.remove(pf)
@@ -1150,18 +1231,32 @@ def main():
         preset="medium",
         threads=2,
         logger="bar",
+        ffmpeg_params=["-bufsize", "4M", "-maxrate", "8M"],
     )
 
     # Cleanup moviepy resources
     if not use_batch_mode:
         for clip in segment_clips:
+            for raw in getattr(clip, "_src_clips_to_close", []):
+                try: raw.close()
+                except Exception: pass
             try:
                 clip.close()
             except Exception:
                 pass
+    for clip in overlay_clips:
+        try:
+            clip.close()
+        except Exception:
+            pass
     try:
         voiceover.close()
         final_video.close()
+    except Exception:
+        pass
+    try:
+        import gc
+        gc.collect()
     except Exception:
         pass
 

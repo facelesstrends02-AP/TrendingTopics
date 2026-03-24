@@ -23,6 +23,7 @@ import argparse
 import json
 import math
 import os
+import random
 import re
 import shutil
 import subprocess
@@ -44,14 +45,28 @@ FFMPEG_BIN = _FFMPEG_FULL if os.path.exists(_FFMPEG_FULL) else "ffmpeg"
 
 TARGET_W = 1080
 TARGET_H = 1920
-MAX_DURATION = 60.0
+MAX_DURATION = 45.0   # sweet spot: 20-45s maximizes completion rate + total views
 HOOK_END = 3.5        # seconds hook overlay is shown
-CTA_BEFORE_END = 8.0  # seconds before audio end to show CTA
+CTA_BEFORE_END = 6.0  # seconds before audio end to show CTA (tighter for shorter videos)
 
-CAPTION_COLORS = ["#FFD700", "#FF6B6B", "#00E5CC", "#7FFF00", "#FF8C42"]
+CAPTION_COLOR_POOL = [
+    "#FFD700",  # gold
+    "#FF6B6B",  # coral
+    "#00E5CC",  # teal
+    "#60A5FA",  # sky blue
+    "#A78BFA",  # soft purple
+    "#34D399",  # mint green
+    "#FBBF24",  # amber
+    "#F472B6",  # pink
+    "white",
+]
+CAPTION_FONT_POOL = [
+    os.path.join(PROJECT_ROOT, "fonts", "Poppins-SemiBold.ttf"),
+    os.path.join(PROJECT_ROOT, "fonts", "Montserrat.ttf"),
+    os.path.join(PROJECT_ROOT, "fonts", "Rubik.ttf"),
+    os.path.join(PROJECT_ROOT, "fonts", "Raleway.ttf"),
+]
 
-FONT_URL = "https://github.com/google/fonts/raw/main/ofl/montserrat/Montserrat-Bold.ttf"
-FONT_LOCAL = os.path.join(PROJECT_ROOT, ".tmp", "fonts", "Montserrat-Bold.ttf")
 FONT_FALLBACKS = [
     "/System/Library/Fonts/Futura.ttc",
     "/Library/Fonts/Futura.ttc",
@@ -68,30 +83,21 @@ PEXELS_VIDEOS_API = "https://api.pexels.com/videos/search"
 # Utilities
 # ---------------------------------------------------------------------------
 
-def ensure_font() -> str:
-    """Return path to a usable bold font. Downloads Montserrat-Bold if needed."""
-    if os.path.exists(FONT_LOCAL) and os.path.getsize(FONT_LOCAL) > 1000:
-        return FONT_LOCAL
-
-    os.makedirs(os.path.dirname(FONT_LOCAL), exist_ok=True)
-    try:
-        print(f"Downloading Montserrat-Bold font...", file=sys.stderr)
-        resp = requests.get(FONT_URL, timeout=30)
-        resp.raise_for_status()
-        with open(FONT_LOCAL, "wb") as f:
-            f.write(resp.content)
-        print(f"Font saved → {FONT_LOCAL}", file=sys.stderr)
-        return FONT_LOCAL
-    except Exception as e:
-        print(f"WARNING: Could not download Montserrat: {e}", file=sys.stderr)
-
-    for fp in FONT_FALLBACKS:
-        if os.path.exists(fp):
-            print(f"Using fallback font: {fp}", file=sys.stderr)
-            return fp
-
-    print("WARNING: No bold font found — ffmpeg will use its built-in default.", file=sys.stderr)
-    return ""
+def pick_short_style() -> tuple:
+    """Randomly pick a font and independent colors for captions, hook, and CTA."""
+    available = [p for p in CAPTION_FONT_POOL if os.path.exists(p)]
+    if not available:
+        for fp in FONT_FALLBACKS:
+            if os.path.exists(fp):
+                available = [fp]
+                break
+    font_path = random.choice(available) if available else ""
+    colors = random.sample(CAPTION_COLOR_POOL, min(3, len(CAPTION_COLOR_POOL)))
+    caption_color, hook_color, cta_color = colors[0], colors[1], colors[2]
+    print(f"  Short style → font: {os.path.basename(font_path or 'default')} | "
+          f"caption: {caption_color} | hook: {hook_color} | cta: {cta_color}",
+          file=sys.stderr)
+    return font_path, caption_color, hook_color, cta_color
 
 
 def ffmpeg_escape(text: str) -> str:
@@ -103,10 +109,10 @@ def ffmpeg_escape(text: str) -> str:
     return text
 
 
-def run_ffmpeg(cmd: list, description: str = ""):
+def run_ffmpeg(cmd: list, description: str = "", timeout: int = 300):
     """Run an ffmpeg command, logging it to stderr. Raises on non-zero exit."""
     print(f"  ffmpeg: {' '.join(cmd[:8])}{'...' if len(cmd) > 8 else ''}", file=sys.stderr)
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     if result.returncode != 0:
         print(f"ERROR: ffmpeg failed ({description}):", file=sys.stderr)
         print(result.stderr[-2000:], file=sys.stderr)
@@ -148,6 +154,49 @@ def proportional_durations(sentences: list, total: float) -> list:
     weights = [max(len(s.split()), 1) for s in sentences]
     total_w = sum(weights)
     return [(w / total_w) * total for w in weights]
+
+
+def rechunk_captions(sentences: list, durations: list,
+                     max_chars: int = 26, max_lines: int = 2) -> tuple:
+    """Split any sentence that would render more than max_lines caption lines
+    into smaller chunks, distributing duration proportionally by word count.
+
+    Returns (new_sentences, new_durations) — same total duration, more chunks.
+    """
+    new_sentences, new_durations = [], []
+    max_chars_total = max_chars * max_lines   # max chars before we must split
+
+    for sentence, dur in zip(sentences, durations):
+        words = sentence.split()
+        # If the sentence fits in max_lines, keep as-is
+        if len(sentence) <= max_chars_total:
+            new_sentences.append(sentence)
+            new_durations.append(dur)
+            continue
+
+        # Split into chunks of at most max_lines lines each
+        chunks, current_chunk = [], []
+        current_len = 0
+        for word in words:
+            test = (current_len + 1 + len(word)) if current_chunk else len(word)
+            if test > max_chars_total and current_chunk:
+                chunks.append(" ".join(current_chunk))
+                current_chunk = [word]
+                current_len = len(word)
+            else:
+                current_chunk.append(word)
+                current_len = test
+        if current_chunk:
+            chunks.append(" ".join(current_chunk))
+
+        # Distribute duration proportionally by word count
+        chunk_weights = [max(len(c.split()), 1) for c in chunks]
+        total_w = sum(chunk_weights)
+        for c, w in zip(chunks, chunk_weights):
+            new_sentences.append(c)
+            new_durations.append(dur * w / total_w)
+
+    return new_sentences, new_durations
 
 
 # ---------------------------------------------------------------------------
@@ -243,6 +292,30 @@ def fetch_portrait_clips(queries: list, pexels_key: str, tmp_dir: str) -> list:
 # ---------------------------------------------------------------------------
 # Portrait conversion
 # ---------------------------------------------------------------------------
+
+def image_to_portrait_clip(image_path: str, output_path: str, duration: float):
+    """Convert a static image to a 1080×1920 portrait video clip with Ken Burns zoom.
+
+    Only called when a real portrait image is available for the hook sentence.
+    Uses ffmpeg zoompan filter: slow zoom 1.0→1.12 over the clip duration.
+    """
+    fps = 30
+    frames = max(1, int(duration * fps))
+    run_ffmpeg([
+        FFMPEG_BIN, "-y",
+        "-loop", "1", "-i", image_path,
+        "-t", f"{duration:.3f}",
+        "-vf", (
+            f"scale={TARGET_W}:{TARGET_H}:force_original_aspect_ratio=increase,"
+            f"crop={TARGET_W}:{TARGET_H},"
+            f"zoompan=z='min(zoom+0.0004,1.12)':d={frames}:s={TARGET_W}x{TARGET_H},"
+            f"setsar=1"
+        ),
+        "-r", str(fps),
+        "-an", "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+        output_path,
+    ], description=f"Ken Burns portrait clip from {os.path.basename(image_path)}")
+
 
 def to_portrait(input_path: str, output_path: str):
     """Convert a video clip to 1080×1920 portrait format."""
@@ -390,7 +463,10 @@ def _make_text_file(text: str, max_chars: int, tmp_dir: str) -> str:
 def build_filtergraph(sentences: list, durations: list, font_path: str,
                       total_audio_dur: float,
                       hook_overlay: str, cta_overlay: str,
-                      tmp_dir: str) -> str:
+                      tmp_dir: str,
+                      caption_color: str = "white",
+                      hook_color: str = "#FFD700",
+                      cta_color: str = "white") -> str:
     """
     Build an ffmpeg -vf filtergraph string that:
     - Burns per-sentence captions (each in a rotating color)
@@ -411,7 +487,7 @@ def build_filtergraph(sentences: list, durations: list, font_path: str,
     t = 0.0
     for i, (sentence, dur) in enumerate(zip(sentences, durations)):
         end_t = t + dur
-        color = CAPTION_COLORS[i % len(CAPTION_COLORS)]
+        color = caption_color
         lines = _wrap_text(sentence, max_chars=26)
         total_h = len(lines) * LINE_HEIGHT
         for j, line in enumerate(lines):
@@ -452,7 +528,7 @@ def build_filtergraph(sentences: list, durations: list, font_path: str,
         filters.append(
             f"drawtext=textfile='{hook_file}'"
             f":fontsize=68"
-            f":fontcolor=#FFD700"
+            f":fontcolor={hook_color}"
             f":x=(w-text_w)/2"
             f":y={y_expr}"
             f":borderw=4"
@@ -480,7 +556,7 @@ def build_filtergraph(sentences: list, durations: list, font_path: str,
         filters.append(
             f"drawtext=textfile='{cta_file}'"
             f":fontsize=64"
-            f":fontcolor=white"
+            f":fontcolor={cta_color}"
             f":x=(w-text_w)/2"
             f":y={y_expr}"
             f":borderw=2"
@@ -498,7 +574,7 @@ def build_filtergraph(sentences: list, durations: list, font_path: str,
 
 def main():
     parser = argparse.ArgumentParser(description="Assemble a YouTube Short (9:16 portrait) with ffmpeg")
-    parser.add_argument("--script-path", required=True, help="Full video script JSON (for channel name)")
+    parser.add_argument("--script-path", default=None, help="Full video script JSON (optional, used for hook image query)")
     parser.add_argument("--audio-path", required=True, help="Voiceover MP3")
     parser.add_argument("--output-path", required=True, help="Output MP4 path")
     parser.add_argument("--hook-overlay", required=True, help="ALL CAPS hook text (shown first 3.5s)")
@@ -508,7 +584,7 @@ def main():
                         help="JSON array of 3 Pexels search queries")
     args = parser.parse_args()
 
-    for path, name in [(args.audio_path, "Audio"), (args.script_path, "Script")]:
+    for path, name in [(args.audio_path, "Audio")]:
         if not os.path.exists(path):
             print(f"ERROR: {name} not found: {path}", file=sys.stderr)
             sys.exit(1)
@@ -542,7 +618,7 @@ def main():
 
 
 def _assemble(args, pexels_key, pexels_queries, tmp_dir, output_dir):
-    font_path = ensure_font()
+    font_path, caption_color, hook_color, cta_color = pick_short_style()
 
     # Audio duration
     total_audio_dur = get_duration(args.audio_path)
@@ -553,7 +629,45 @@ def _assemble(args, pexels_key, pexels_queries, tmp_dir, output_dir):
     # Sentence split and proportional durations
     sentences = split_sentences(args.spoken_script)
     durations = proportional_durations(sentences, effective_dur)
-    print(f"Split into {len(sentences)} sentences.", file=sys.stderr)
+    # Re-chunk long sentences so captions never exceed 2 lines on screen
+    sentences, durations = rechunk_captions(sentences, durations)
+    print(f"Split into {len(sentences)} caption chunks.", file=sys.stderr)
+
+    # Try to fetch one real portrait image for the hook sentence
+    real_portrait_clip = None
+    _hook_query = ""
+    if args.script_path and os.path.exists(args.script_path):
+        with open(args.script_path) as f:
+            _script = json.load(f)
+        for seg in _script.get("segments", []):
+            if seg.get("type") == "hook":
+                _hook_query = (seg.get("news_search_query") or "").strip()
+                break
+    if not _hook_query and pexels_queries:
+        _hook_query = pexels_queries[0]
+
+    if _hook_query:
+        _fetch_tool = os.path.join(os.path.dirname(__file__), "fetch_real_images.py")
+        _real_img = os.path.join(tmp_dir, "real_hook.jpg")
+        print(f"Trying real portrait image: '{_hook_query}'...", file=sys.stderr)
+        try:
+            _result = subprocess.run(
+                [sys.executable, _fetch_tool,
+                 "--query", _hook_query,
+                 "--output-file", _real_img,
+                 "--orientation", "portrait"],
+                capture_output=True, text=True, timeout=30
+            )
+            if _result.returncode == 0 and os.path.exists(_real_img):
+                _portrait_out = os.path.join(tmp_dir, "real_hook_portrait.mp4")
+                _hook_dur = durations[0] if durations else 5.0
+                image_to_portrait_clip(_real_img, _portrait_out, _hook_dur)
+                real_portrait_clip = _portrait_out
+                print("  Real portrait image ready for hook sentence.", file=sys.stderr)
+            else:
+                print("  No real portrait image found — using Pexels only.", file=sys.stderr)
+        except Exception as e:
+            print(f"  Real portrait image fetch failed: {e}", file=sys.stderr)
 
     # Fetch and convert Pexels clips to portrait
     print("Fetching Pexels portrait clips...", file=sys.stderr)
@@ -570,6 +684,12 @@ def _assemble(args, pexels_key, pexels_queries, tmp_dir, output_dir):
                 portrait_clips.append(dst)
             except Exception as e:
                 print(f"  WARNING: Portrait conversion failed for clip {i}: {e}", file=sys.stderr)
+
+    # Prepend real portrait clip as first in pool (hook sentence uses it)
+    if real_portrait_clip and os.path.exists(real_portrait_clip):
+        portrait_clips.insert(0, real_portrait_clip)
+        print(f"  Real portrait clip prepended to pool ({len(portrait_clips)} total).",
+              file=sys.stderr)
 
     if not portrait_clips:
         print("WARNING: No portrait clips available — using black background.", file=sys.stderr)
@@ -609,6 +729,9 @@ def _assemble(args, pexels_key, pexels_queries, tmp_dir, output_dir):
         sentences, durations, font_path,
         effective_dur, args.hook_overlay, args.cta_overlay,
         tmp_dir=tmp_dir,
+        caption_color=caption_color,
+        hook_color=hook_color,
+        cta_color=cta_color,
     )
 
     # Final render: silent video + audio + filtergraph → output

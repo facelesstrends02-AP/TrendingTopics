@@ -2,6 +2,7 @@
 fetch_mixed_footage.py — Fetch mixed footage for script segments
 
 Priority per segment:
+  0. Real image: CC-licensed photo from Wikimedia Commons / Openverse (hook, context, point_N only)
   1. News image: scrape og:image from a relevant news article (saved as .jpg)
   2. Video clips (per query, waterfall across sources):
        a. Original query → Pexels
@@ -11,7 +12,7 @@ Priority per segment:
   3. Pexels photo: static image from Pexels Photos API (if no video found)
   4. Empty (non-fatal): segment skipped in assembly
 
-News images are still JPEGs — assemble_video.py handles them with slow Ken Burns zoom.
+Real/news images are JPEGs — assemble_video.py handles them with slow Ken Burns zoom.
 Video clips are standard .mp4 — assembled with rapid cuts as usual.
 
 Usage:
@@ -34,6 +35,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import time
 
@@ -47,6 +49,10 @@ PEXELS_PHOTOS_API = "https://api.pexels.com/v1"
 PIXABAY_VIDEOS_API = "https://pixabay.com/api/videos/"
 QUERIES_PER_SEGMENT = 3
 MIN_IMAGE_WIDTH = 800
+
+FETCH_REAL_IMAGES_TOOL = os.path.join(os.path.dirname(__file__), "fetch_real_images.py")
+# Segment types where a real image is likely to be meaningful
+REAL_IMAGE_SEGMENT_TYPES = {"hook", "context", "point_1", "point_2", "point_3", "point_4"}
 
 HEADERS = {
     "User-Agent": (
@@ -211,6 +217,7 @@ def download_and_validate_image(image_url: str, output_path: str) -> bool:
         img = Image.open(io.BytesIO(raw))
 
         if img.width < MIN_IMAGE_WIDTH:
+            img.close()
             return False
 
         # Convert to RGB (handles PNG with transparency, etc.)
@@ -218,6 +225,7 @@ def download_and_validate_image(image_url: str, output_path: str) -> bool:
             img = img.convert("RGB")
 
         img.save(output_path, "JPEG", quality=92)
+        img.close()
         return True
 
     except Exception as e:
@@ -282,7 +290,7 @@ def fetch_news_image(news_query: str, output_path: str, newsapi_key: str = None)
 # Pexels video fetching (from fetch_pexels_footage.py)
 # ---------------------------------------------------------------------------
 
-def search_pexels_videos(api_key: str, query: str, per_page: int = 5) -> list:
+def search_pexels_videos(api_key: str, query: str, per_page: int = 10) -> list:
     headers = {"Authorization": api_key}
     params = {"query": query, "per_page": per_page, "orientation": "landscape", "size": "large"}
     resp = requests.get(f"{PEXELS_VIDEOS_API}/search", headers=headers, params=params, timeout=30)
@@ -492,11 +500,46 @@ def process_segment(seg: dict, output_dir: str, pexels_api_key: str,
       3. Pexels photo fallback (if no video found at all)
     """
     seg_id = seg.get("segment_id", 0)
+    seg_type = seg.get("type", "")
     duration = seg.get("duration_estimate", 15)
     downloaded = []
 
-    # --- 1. Try news image ---
+    # --- 0. Try real image (Wikimedia Commons / Openverse) ---
+    # Try queries in order: thumbnail_person_query (entity-focused, best for Wikimedia),
+    # then news_search_query (more specific, better for Openverse).
     news_query = (seg.get("news_search_query") or "").strip()
+    person_query = (seg.get("_thumbnail_person_query") or "").strip()
+    real_queries = [q for q in [person_query, news_query] if q]
+
+    if seg_type in REAL_IMAGE_SEGMENT_TYPES and real_queries:
+        real_filename = f"clip_{seg_id:03d}_real.jpg"
+        real_path = os.path.join(output_dir, real_filename)
+        if os.path.exists(real_path) and os.path.getsize(real_path) > 10000:
+            downloaded.append(real_filename)
+            print(f"  Segment {seg_id}: real image already cached", file=sys.stderr)
+        else:
+            for rq in real_queries:
+                try:
+                    result = subprocess.run(
+                        [sys.executable, FETCH_REAL_IMAGES_TOOL,
+                         "--query", rq,
+                         "--output-file", real_path,
+                         "--orientation", "landscape"],
+                        capture_output=True, text=True, timeout=30
+                    )
+                    if result.returncode == 0 and os.path.exists(real_path):
+                        downloaded.append(real_filename)
+                        print(f"  Segment {seg_id}: real image saved ({real_filename})",
+                              file=sys.stderr)
+                        break
+                    else:
+                        if result.stderr:
+                            for line in result.stderr.strip().splitlines():
+                                print(f"  {line}", file=sys.stderr)
+                except Exception as e:
+                    print(f"  Segment {seg_id}: real image fetch error: {e}", file=sys.stderr)
+
+    # --- 1. Try news image ---
     if news_query:
         news_filename = f"clip_{seg_id:03d}_news.jpg"
         news_path = os.path.join(output_dir, news_filename)
@@ -518,9 +561,9 @@ def process_segment(seg: dict, output_dir: str, pexels_api_key: str,
             continue
 
         if source == "pexels":
-            clips = pick_best_n_video_clips(results, n=2, min_duration=duration)
+            clips = pick_best_n_video_clips(results, n=3, min_duration=8)
         else:
-            clips = pick_best_pixabay_clips(results, n=2, min_duration=duration)
+            clips = pick_best_pixabay_clips(results, n=3, min_duration=8)
 
         for item, clip_url in clips:
             clip_filename = f"clip_{seg_id:03d}_{clip_counter}.mp4"
@@ -612,9 +655,16 @@ def main():
     manifest = {}
     failed_segments = []
 
+    # Inject script-level thumbnail_person_query into each segment for real image fallback
+    person_query = script.get("thumbnail_person_query", "")
+
     for seg in segments:
         seg_id = seg.get("segment_id", 0)
         print(f"\nProcessing segment {seg_id}...", file=sys.stderr)
+
+        if person_query:
+            seg = dict(seg)   # don't mutate original
+            seg["_thumbnail_person_query"] = person_query
 
         clips = process_segment(seg, args.output_dir, pexels_api_key, newsapi_key, channel_name, pixabay_api_key)
 
@@ -632,7 +682,12 @@ def main():
     total = len(segments)
     fetched = len(manifest)
 
-    # Count news images vs video clips
+    # Count real/news images vs video clips
+    real_count = sum(
+        1 for clips in manifest.values()
+        for c in (clips if isinstance(clips, list) else [clips])
+        if "_real.jpg" in c
+    )
     news_count = sum(
         1 for clips in manifest.values()
         for c in (clips if isinstance(clips, list) else [clips])
@@ -645,7 +700,8 @@ def main():
     )
 
     print(f"\nFetched {fetched}/{total} segments → {args.output_dir}", file=sys.stderr)
-    print(f"  News images: {news_count} | Pexels videos: {video_count}", file=sys.stderr)
+    print(f"  Real images: {real_count} | News images: {news_count} | Pexels videos: {video_count}",
+          file=sys.stderr)
     if failed_segments:
         print(f"  Failed segments: {failed_segments}", file=sys.stderr)
 

@@ -12,10 +12,11 @@ Flow:
   4. Per short: voiceover → assemble → upload (private) → schedule publish
 
 Usage:
-    python3 agents/shorts_agent.py --video-key video_1
+    python3 agents/shorts_agent.py                     # standalone, key = shorts_YYYY-MM-DD
+    python3 agents/shorts_agent.py --video-key video_1 # tied to a specific video in state
 
-State reads:  state.videos.{video_key}.script_path        (still needed by assemble_short.py)
-              state.videos.{video_key}.scheduled_publish_at
+State reads:  state.videos.{video_key}.scheduled_publish_at (optional)
+              state.videos.{video_key}.script_path          (optional, for hook image only)
 State writes: state.videos.{video_key}.shorts.short_{0,1}
               state.videos.{video_key}.shorts_scheduling_triggered (set by shorts_scheduler)
 """
@@ -130,19 +131,20 @@ def build_notification_email(video_key: str, produced: dict, channel_name: str) 
 # ---------------------------------------------------------------------------
 
 def main():
-    parser = argparse.ArgumentParser(description="Produce 2 YouTube Shorts for a video")
-    parser.add_argument("--video-key", required=True,
-                        help="Key in state.videos (e.g. video_1)")
+    parser = argparse.ArgumentParser(description="Produce 2 YouTube Shorts")
+    parser.add_argument("--video-key", default=None,
+                        help="Optional state key (e.g. video_1). Defaults to shorts_YYYY-MM-DD.")
     args = parser.parse_args()
-    video_key = args.video_key
+    video_key = args.video_key or f"shorts_{datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
 
     state = get_state()
     videos = state.get("videos", {})
 
     if video_key not in videos:
-        print(f"ERROR: '{video_key}' not found in state.videos.", file=sys.stderr)
-        print(f"Available keys: {list(videos.keys())}", file=sys.stderr)
-        sys.exit(1)
+        print(f"[shorts_agent] '{video_key}' not in state.videos — registering as standalone.")
+        update_state({"videos": {video_key: {}}})
+        state = get_state()
+        videos = state.get("videos", {})
 
     video_data = videos[video_key]
     channel_name = os.getenv("CHANNEL_NAME", "TrendingTopics")
@@ -155,11 +157,10 @@ def main():
         print(f"[shorts_agent] Both shorts already scheduled for {video_key}. Nothing to do.")
         sys.exit(0)
 
-    # Inputs from state
+    # Inputs from state (script_path is optional — Shorts are independent)
     script_path = video_data.get("script_path")
-    if not script_path or not os.path.exists(script_path):
-        log_error(f"script_path not found for {video_key}: {script_path}")
-        sys.exit(1)
+    if script_path and not os.path.exists(script_path):
+        script_path = None  # Don't pass a path that doesn't exist
 
     scheduled_publish_at = (video_data.get("scheduled_publish_at")
                              or video_data.get("scheduled_at"))
@@ -260,15 +261,17 @@ def main():
             # Step 2b: Assemble short
             if not (os.path.exists(short_output) and os.path.getsize(short_output) > 100_000):
                 print(f"  [b] Assembling Short (ffmpeg)...")
-                run_tool("assemble_short.py", [
-                    "--script-path", script_path,
+                assemble_args = [
                     "--audio-path", audio_path,
                     "--output-path", short_output,
                     "--hook-overlay", short["hook_overlay"],
                     "--cta-overlay", short["cta_overlay"],
                     "--spoken-script", short["spoken_script"],
                     "--pexels-queries", json.dumps(short["pexels_queries"]),
-                ], capture_output=False)
+                ]
+                if script_path:
+                    assemble_args += ["--script-path", script_path]
+                run_tool("assemble_short.py", assemble_args, capture_output=False)
             else:
                 print(f"  [b] Short video already assembled, skipping.")
 
