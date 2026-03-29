@@ -222,6 +222,44 @@ def main():
         log_error(f"shorts_plan for {video_key} has fewer than 2 entries.")
         sys.exit(1)
 
+    # Step 3.5: Fact-check the Shorts scripts
+    if os.getenv("FACT_CHECK_ENABLED", "1") == "1":
+        report_dir = os.path.join(TMP_DIR, "fact_checks")
+        os.makedirs(report_dir, exist_ok=True)
+        shorts_report_path = os.path.join(report_dir, f"{video_key}_shorts_fact_check.json")
+        print(f"[shorts_agent] Fact-checking Short scripts for {video_key}...")
+
+        fc_rc, fc_out, fc_err = _run_raw("fact_check_script.py", [
+            "--script-file", plan_path,
+            "--output-report", shorts_report_path,
+            "--mode", "shorts",
+        ])
+
+        if fc_rc == 0:
+            try:
+                with open(shorts_report_path) as _f:
+                    fc_report = json.load(_f)
+                revised = fc_report["summary"].get("auto_revised", 0)
+                total = fc_report["summary"].get("total_claims", 0)
+                print(f"[shorts_agent] Fact-check passed: {total} claims, {revised} auto-revised.")
+            except Exception:
+                print(f"[shorts_agent] Fact-check passed.")
+            # Reload plan in case claims were revised in place
+            with open(plan_path) as f:
+                shorts_plan = json.load(f)
+        elif fc_rc == 2:
+            # DISPUTED in a Short — log and continue (lower stakes than full video)
+            log_error(
+                f"Disputed claims found in Shorts scripts for {video_key}. "
+                f"Check {shorts_report_path}. Continuing production."
+            )
+            # Still reload in case non-disputed claims were auto-revised
+            with open(plan_path) as f:
+                shorts_plan = json.load(f)
+        else:
+            print(f"[shorts_agent] WARNING: Fact-check failed (exit {fc_rc}): {fc_err}", file=sys.stderr)
+            print(f"[shorts_agent] Continuing without fact-check (graceful degradation).", file=sys.stderr)
+
     # Compute publish schedule
     publish_slots = compute_short_publish_times(scheduled_publish_at)
     print(f"[shorts_agent] Publish slots: {publish_slots[0]}, {publish_slots[1]}")

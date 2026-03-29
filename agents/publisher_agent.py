@@ -165,6 +165,18 @@ def main():
             print(f"  ✗ {error_msg}", file=sys.stderr)
             failed.append(title)
 
+    # Regenerate Reddit guides now that public_url is in state (guides will have correct URLs)
+    reddit_guides = {}
+    for video_key, _ in approved_videos:
+        try:
+            run_tool("generate_reddit_guide.py", ["--video-key", video_key])
+            guide_path = os.path.join(TMP_DIR, "reddit", f"{video_key}_reddit_guide.md")
+            if os.path.exists(guide_path):
+                with open(guide_path) as f:
+                    reddit_guides[video_key] = f.read()
+        except Exception as rg_err:
+            print(f"  WARNING: Reddit guide generation failed for {video_key}: {rg_err}", file=sys.stderr)
+
     # Send completion email
     week_str = state.get("week", datetime.now(timezone.utc).strftime("%Y-%m-%d"))
 
@@ -193,8 +205,21 @@ def main():
             "  • Check analytics in 48 hours after each publish",
             f"  • New ideas will be generated next Sunday",
             "",
-            "—YouTube Automation",
         ]
+
+        if reddit_guides:
+            lines += [
+                "═" * 50,
+                "REDDIT POSTING GUIDES",
+                "═" * 50,
+                "",
+            ]
+            for video_key, _ in approved_videos:
+                if video_key in reddit_guides:
+                    lines.append(reddit_guides[video_key])
+                    lines.append("")
+
+        lines.append("—YouTube Automation")
 
         subject = f"[YT Automation] {len(published)} Video(s) Scheduled for This Week!"
         if failed:

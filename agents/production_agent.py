@@ -118,6 +118,66 @@ def produce_video(idea_id, video_key, ideas_path):
         script_data = json.load(f)
     title = script_data.get("title", f"Video {idea_id}")
 
+    # ── Step A.5: Fact-Check Script ─────────────────────────────────────────
+    if os.getenv("FACT_CHECK_ENABLED", "1") == "1":
+        report_dir = os.path.join(TMP_DIR, "fact_checks")
+        os.makedirs(report_dir, exist_ok=True)
+        report_path = os.path.join(report_dir, f"{video_key}_fact_check.json")
+        print(f"  [A.5] Fact-checking script for '{title}'...")
+
+        fc_rc, fc_out, fc_err = _run_raw("fact_check_script.py", [
+            "--script-file", script_path,
+            "--output-report", report_path,
+        ])
+
+        if fc_rc == 0:
+            try:
+                with open(report_path) as _f:
+                    fc_report = json.load(_f)
+                revised = fc_report["summary"].get("auto_revised", 0)
+                total = fc_report["summary"].get("total_claims", 0)
+                print(f"  [A.5] Fact-check passed: {total} claims checked, {revised} auto-revised.")
+            except Exception:
+                print(f"  [A.5] Fact-check passed.")
+            # Reload script in case claims were revised in place
+            with open(script_path) as f:
+                script_data = json.load(f)
+            title = script_data.get("title", f"Video {idea_id}")
+
+        elif fc_rc == 2:
+            # DISPUTED claims — pause this video and email user
+            print(f"  [A.5] DISPUTED claims found in '{title}'. Pausing production.", file=sys.stderr)
+            try:
+                with open(report_path) as _f:
+                    fc_report = json.load(_f)
+                disputed_lines = "\n".join(
+                    f"  - \"{c['claim_text'][:100]}\"\n    Reason: {c.get('rationale', '')}"
+                    for c in fc_report.get("disputed_claims", [])
+                )
+            except Exception:
+                disputed_lines = "(could not read report)"
+            try:
+                run_tool("send_email.py", [
+                    "--to", os.getenv("APPROVAL_EMAIL", ""),
+                    "--subject", f"[YT Automation] FACT CHECK ALERT: '{title}' paused",
+                    "--body", (
+                        f"Production of '{title}' has been paused due to disputed factual claims.\n\n"
+                        f"DISPUTED CLAIMS:\n{disputed_lines}\n\n"
+                        f"Full report: {report_path}\n\n"
+                        f"Fix the claim(s) in {script_path} and re-run production_agent.py.\n"
+                        f"The pipeline will resume from the voiceover step automatically.\n\n"
+                        f"To skip fact-checking temporarily: set FACT_CHECK_ENABLED=0 in .env"
+                    ),
+                ])
+            except Exception as email_err:
+                print(f"  WARNING: Could not send fact-check alert email: {email_err}", file=sys.stderr)
+            raise RuntimeError(f"Fact-check found disputed claims in '{title}'. Production paused.")
+
+        else:
+            # fc_rc == 1 or unexpected error — non-fatal, log and continue
+            print(f"  WARNING: Fact-check tool failed (exit {fc_rc}): {fc_err}", file=sys.stderr)
+            print(f"  [A.5] Continuing without fact-check (graceful degradation).", file=sys.stderr)
+
     # ── Step B: Generate Voiceover ──────────────────────────────────────────
     if script_valid and os.path.exists(audio_path) and os.path.getsize(audio_path) > 0:
         print(f"  [B] Voiceover already exists, skipping generation.")
@@ -189,7 +249,13 @@ def produce_video(idea_id, video_key, ideas_path):
             ]
             if captions_path and os.path.exists(captions_path):
                 assemble_args += ["--captions-file", captions_path]
-            run_tool("assemble_video.py", assemble_args, capture_output=False)  # Show render progress
+            # Stream assembly output to cron.log so it's tailable
+            log_path = os.path.join(TMP_DIR, "cron.log")
+            cmd = [PYTHON, os.path.join(TOOLS_DIR, "assemble_video.py")] + assemble_args
+            with open(log_path, "a") as log_fh:
+                result = subprocess.run(cmd, stdout=log_fh, stderr=log_fh, text=True)
+            if result.returncode != 0:
+                raise RuntimeError(f"assemble_video.py failed (exit {result.returncode})")
         except Exception as e:
             raise RuntimeError(f"Video assembly failed: {e}")
 
@@ -366,6 +432,12 @@ def _main():
             # Update state incrementally
             update_state({"videos": {video_key: video_meta}})
             print(f"  ✓ {video_key} complete: {video_meta['youtube_url']}")
+
+            # Generate manual Reddit posting guide (non-fatal)
+            try:
+                run_tool("generate_reddit_guide.py", ["--video-key", video_key])
+            except Exception as rg_err:
+                print(f"  WARNING: Reddit guide generation failed: {rg_err}", file=sys.stderr)
 
         except Exception as e:
             error_msg = f"Failed to produce {video_key} (idea {idea_id}): {e}"

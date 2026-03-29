@@ -195,12 +195,26 @@ def main():
     os.makedirs(TMP_DIR, exist_ok=True)
     cleanup_tmp()
 
-    # ── Step 1: Load Published Videos Registry ──────────────────────────────
-    print("[1/6] Loading published video registry...")
-    registry = load_registry()
+    # ── Step 1: Fetch all public videos from the channel ────────────────────
+    print("[1/6] Fetching public videos from YouTube channel...")
+    channel_videos_path = os.path.join(TMP_DIR, "channel_videos.json")
+    video_ids = []
 
-    if not registry:
-        print("  → No published videos yet. Skipping analytics.")
+    try:
+        run_tool("fetch_channel_videos.py", ["--output-file", channel_videos_path])
+        with open(channel_videos_path) as f:
+            channel_videos = json.load(f)
+        video_ids = [v["youtube_video_id"] for v in channel_videos if v.get("youtube_video_id")]
+        print(f"  → {len(video_ids)} public video(s) on channel")
+    except Exception as e:
+        print(f"  WARNING: Could not fetch channel videos: {e}", file=sys.stderr)
+        # Fall back to registry
+        registry = load_registry()
+        video_ids = [v["youtube_video_id"] for v in registry if v.get("youtube_video_id")]
+        print(f"  → Fell back to registry: {len(video_ids)} video(s)")
+
+    if not video_ids:
+        print("  → No public videos found yet. Skipping analytics.")
         if not args.dry_run:
             try:
                 run_tool("send_email.py", [
@@ -211,9 +225,6 @@ def main():
             except Exception:
                 pass
         sys.exit(0)
-
-    video_ids = [v["youtube_video_id"] for v in registry if v.get("youtube_video_id")]
-    print(f"  → {len(video_ids)} published video(s) in registry")
 
     # ── Step 2: Fetch Video Analytics ───────────────────────────────────────
     print("[2/6] Fetching video analytics from YouTube...")

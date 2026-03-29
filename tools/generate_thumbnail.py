@@ -20,6 +20,7 @@ import argparse
 import io
 import json
 import os
+import random
 import sys
 from pathlib import Path
 
@@ -84,13 +85,13 @@ def fetch_pexels_photo(query, api_key, orientation="landscape"):
             resp = requests.get(
                 "https://api.pexels.com/v1/search",
                 headers=headers,
-                params={"query": q, "per_page": 15, "orientation": orientation},
+                params={"query": q, "per_page": 30, "orientation": orientation},
                 timeout=15,
             )
             resp.raise_for_status()
             photos = resp.json().get("photos", [])
             if photos:
-                src = photos[0].get("src", {})
+                src = random.choice(photos).get("src", {})
                 url = src.get("large2x") or src.get("large") or src.get("original")
                 if url:
                     return url

@@ -69,20 +69,30 @@ CAPTION_FONT_POOL = [
     os.path.join(PROJECT_ROOT, "fonts", "Raleway.ttf"),
 ]
 
+# Fixed fonts: Poppins-SemiBold (thickest) for overlays/CTA/chapter cards,
+# Montserrat for captions/watermark (readable medium weight).
+OVERLAY_FONT_PATH = os.path.join(PROJECT_ROOT, "fonts", "Poppins-SemiBold.ttf")
+CAPTION_FONT_PATH = os.path.join(PROJECT_ROOT, "fonts", "Montserrat.ttf")
+
 # Set once per run by pick_video_style(); used by all text functions
 _VIDEO_FONT_PATH = None
+_VIDEO_FONT_PATH_OVERLAY = None   # hook, CTA overlays, chapter cards
+_VIDEO_FONT_PATH_CAPTION = None   # dialogue captions, watermark
 _VIDEO_COLOR_CAPTION = (255, 255, 255, 255)
 _VIDEO_COLOR_OVERLAY = (255, 215, 0, 255)
 _VIDEO_COLOR_CHAPTER = (255, 255, 255, 255)
 
 
 def pick_video_style():
-    global _VIDEO_FONT_PATH, _VIDEO_COLOR_CAPTION, _VIDEO_COLOR_OVERLAY, _VIDEO_COLOR_CHAPTER
-    available = [p for p in CAPTION_FONT_POOL if os.path.exists(p)]
-    _VIDEO_FONT_PATH = random.choice(available) if available else None
+    global _VIDEO_FONT_PATH, _VIDEO_FONT_PATH_OVERLAY, _VIDEO_FONT_PATH_CAPTION
+    global _VIDEO_COLOR_CAPTION, _VIDEO_COLOR_OVERLAY, _VIDEO_COLOR_CHAPTER
+    _VIDEO_FONT_PATH_OVERLAY = OVERLAY_FONT_PATH if os.path.exists(OVERLAY_FONT_PATH) else None
+    _VIDEO_FONT_PATH_CAPTION = CAPTION_FONT_PATH if os.path.exists(CAPTION_FONT_PATH) else None
+    _VIDEO_FONT_PATH = _VIDEO_FONT_PATH_OVERLAY  # backward-compat fallback
     colors = random.sample(CAPTION_COLOR_POOL, min(3, len(CAPTION_COLOR_POOL)))
     _VIDEO_COLOR_CAPTION, _VIDEO_COLOR_OVERLAY, _VIDEO_COLOR_CHAPTER = colors[0], colors[1], colors[2]
-    print(f"  Video style → font: {os.path.basename(_VIDEO_FONT_PATH or 'default')} | "
+    print(f"  Video style → overlay font: {os.path.basename(_VIDEO_FONT_PATH_OVERLAY or 'default')} | "
+          f"caption font: {os.path.basename(_VIDEO_FONT_PATH_CAPTION or 'default')} | "
           f"caption: {_VIDEO_COLOR_CAPTION} | overlay: {_VIDEO_COLOR_OVERLAY} | "
           f"chapter: {_VIDEO_COLOR_CHAPTER}", file=sys.stderr)
 
@@ -193,9 +203,10 @@ def make_reveal_text_clip(text, seg_duration, fontsize=OVERLAY_FONTSIZE, bg_opac
 
     # Heavy/bold font for thick heading-style overlay
     font = None
-    if _VIDEO_FONT_PATH and os.path.exists(_VIDEO_FONT_PATH):
+    _overlay_font = _VIDEO_FONT_PATH_OVERLAY or _VIDEO_FONT_PATH
+    if _overlay_font and os.path.exists(_overlay_font):
         try:
-            font = ImageFont.truetype(_VIDEO_FONT_PATH, fontsize)
+            font = ImageFont.truetype(_overlay_font, fontsize)
         except Exception:
             pass
     if font is None:
@@ -280,9 +291,10 @@ def make_chapter_transition_card(text, duration=CHAPTER_CARD_DURATION):
     FADE = 0.3
 
     font = None
-    if _VIDEO_FONT_PATH and os.path.exists(_VIDEO_FONT_PATH):
+    _overlay_font = _VIDEO_FONT_PATH_OVERLAY or _VIDEO_FONT_PATH
+    if _overlay_font and os.path.exists(_overlay_font):
         try:
-            font = ImageFont.truetype(_VIDEO_FONT_PATH, FONTSIZE)
+            font = ImageFont.truetype(_overlay_font, FONTSIZE)
         except Exception:
             pass
     if font is None:
@@ -321,9 +333,10 @@ def make_watermark(channel_name, total_duration):
     from PIL import Image, ImageDraw, ImageFont
 
     font = None
-    if _VIDEO_FONT_PATH and os.path.exists(_VIDEO_FONT_PATH):
+    _caption_font = _VIDEO_FONT_PATH_CAPTION or _VIDEO_FONT_PATH
+    if _caption_font and os.path.exists(_caption_font):
         try:
-            font = ImageFont.truetype(_VIDEO_FONT_PATH, WATERMARK_FONTSIZE)
+            font = ImageFont.truetype(_caption_font, WATERMARK_FONTSIZE)
         except Exception:
             pass
     if font is None:
@@ -424,9 +437,10 @@ def make_caption_chunk_clip(text, start, end):
     fontsize = CAPTION_FONTSIZE
 
     font = None
-    if _VIDEO_FONT_PATH and os.path.exists(_VIDEO_FONT_PATH):
+    _caption_font = _VIDEO_FONT_PATH_CAPTION or _VIDEO_FONT_PATH
+    if _caption_font and os.path.exists(_caption_font):
         try:
-            font = ImageFont.truetype(_VIDEO_FONT_PATH, fontsize)
+            font = ImageFont.truetype(_caption_font, fontsize)
         except Exception:
             pass
     if font is None:

@@ -105,3 +105,36 @@ Completion email sent to `APPROVAL_EMAIL` with subject:
 `Reddit posts live — {video title}`
 
 Body lists all post URLs and any skipped subreddits.
+
+---
+
+## Manual Posting Guide (while Reddit API is inactive)
+
+Until Reddit API credentials are set up, a copy-paste-ready posting guide is automatically generated for each video immediately after assembly completes.
+
+**What gets generated:**
+- Post title and body (hook + angle from ideas.json)
+- Recommended subreddits with direct submission links
+- Per-subreddit notes (link vs self post, karma requirements, flair)
+- Best posting times in IST
+- Step-by-step instructions for Reddit newcomers
+- New account tips (karma building, rate limiting)
+
+**Where to find it:**
+- File: `.tmp/reddit/video_N_reddit_guide.md`
+- Email: sent automatically to `APPROVAL_EMAIL` with subject `Reddit Guide — {title}`
+
+**Manual run:**
+```bash
+venv/bin/python3 tools/generate_reddit_guide.py --video-key video_1
+```
+
+**Switch to automated posting** once Reddit API credentials are configured in `.env`:
+```
+REDDIT_CLIENT_ID=...
+REDDIT_CLIENT_SECRET=...
+REDDIT_USERNAME=...
+REDDIT_PASSWORD=...
+REDDIT_USER_AGENT=TrendingTopics/1.0 by u/<your_username>
+```
+Then use `agents/reddit_agent.py` instead (see top of this workflow).

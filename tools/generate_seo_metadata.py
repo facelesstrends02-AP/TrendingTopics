@@ -84,13 +84,14 @@ def build_seo_tactics_section(strategy):
 
 
 def compute_segment_timestamps(segments):
-    """Return list of 'M:SS' timestamp strings, one per segment."""
+    """Return list of 'H:MM:SS' timestamp strings, one per segment."""
     timestamps = []
     cumulative_seconds = 0
     for seg in segments:
-        mins = cumulative_seconds // 60
+        hours = cumulative_seconds // 3600
+        mins = (cumulative_seconds % 3600) // 60
         secs = cumulative_seconds % 60
-        timestamps.append(f"{mins}:{secs:02d}")
+        timestamps.append(f"{hours}:{mins:02d}:{secs:02d}")
         cumulative_seconds += seg.get("duration_estimate", 20)
     return timestamps
 
@@ -109,9 +110,10 @@ def build_prompt(script, channel_name, strategy=None):
     for seg in segments:
         seg_type = seg.get("type", "")
         dur = seg.get("duration_estimate", 20)
-        mins = cumulative_seconds // 60
+        hours = cumulative_seconds // 3600
+        mins = (cumulative_seconds % 3600) // 60
         secs = cumulative_seconds % 60
-        segment_text += f"  {mins}:{secs:02d} — {seg_type}: {seg.get('text', '')[:80]}\n"
+        segment_text += f"  {hours}:{mins:02d}:{secs:02d} — {seg_type}: {seg.get('text', '')[:80]}\n"
         cumulative_seconds += dur
 
     existing_tags_str = ", ".join(tags[:10]) if tags else "none"
@@ -145,7 +147,7 @@ Segments (for chapter markers):
 
 4. TAGS: 12-15 optimized tags. Mix of: exact match keyword, broad match, related topics, channel niche terms.
 
-5. CHAPTER TITLES: One SEO-optimized title per segment (in order). 4-6 words each, highly descriptive, keyword-rich. Label them as the IMPLICATION or KEY FACT, not the segment type. BAD: "Context", "Point 2", "Background". GOOD: "How Iran Sanctions Affect Gas Prices", "What Tesla Recall Means for Owners", "Why Dollar Is Losing Reserve Status". Each title should be a micro-keyword someone might actually search.
+5. CHAPTER TITLES: One title per segment (in order). Keep it SHORT — 2-3 words ideally, 4-5 absolute max. Must describe what the viewer LEARNS or SEES at that point, not the segment role. BAD: "Hook", "CTA", "Introduction", "Context", "Point 2", "Background". GOOD: "Oil Prices Spike", "What You Pay", "Fix It Now", "Iran Expels Diplomats". Each title should make sense as a standalone navigation label a viewer would click.
 
 6. RELATED VIDEO TOPICS: 5 specific video topic ideas that would appear in YouTube's "suggested videos" sidebar for this content — topics this channel could create to build internal linking momentum.
 
@@ -207,16 +209,18 @@ def inject_chapters(description, chapter_markers):
         ts = ch.get("timestamp", "").strip()
         title = ch.get("title", "").strip()
         if ts and title:
-            lines.append(f"{ts} {title}")
+            lines.append(f"{ts} \u2013 {title}")
 
     if len(lines) < 3:
         return description  # YouTube ignores chapters if fewer than 3
 
-    chapter_block = "\n".join(lines)
+    chapter_block = "\U0001f4d6 Table of Content\n" + "\n".join(lines)
 
-    # Remove any existing timestamp lines from the LLM description
+    # Remove any existing timestamp lines (old M:SS or new H:MM:SS) from the LLM description
     import re
-    cleaned = re.sub(r"^\d+:\d{2}[^\n]*\n?", "", description, flags=re.MULTILINE).strip()
+    cleaned = re.sub(r"^\d+:\d{2}(:\d{2})?[^\n]*\n?", "", description, flags=re.MULTILINE).strip()
+    # Also remove any existing Table of Content header
+    cleaned = re.sub(r"[\U0001f4d6]?\s*Table of Content\n?", "", cleaned).strip()
 
     # Find hashtag section at the end
     hashtag_match = re.search(r"\n(#\S)", cleaned)
